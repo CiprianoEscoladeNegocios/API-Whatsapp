@@ -1,0 +1,129 @@
+// prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Perfis de acesso para os colaboradores
+enum Role {
+  ADMIN
+  OPERATOR
+}
+
+// Tipos de mensagens suportados de acordo com as diretrizes da Meta
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+  TEMPLATE
+}
+
+// Direção da mensagem para controle na caixa de entrada
+enum MessageDirection {
+  INBOUND  // Recebida do cliente
+  OUTBOUND // Enviada pelo operador ou campanha
+}
+
+// Ciclo de vida da entrega das mensagens via webhook de status
+enum MessageStatus {
+  SENT       // Enviada dos nossos servidores para a Meta
+  DELIVERED  // Entregue no celular do cliente
+  READ       // Lida pelo cliente
+  FAILED     // Falha no envio (ex: número inválido ou falta de saldo)
+}
+
+// Status de aprovação de templates gerenciado pela Meta
+enum TemplateStatus {
+  DRAFT      // Em criação na nossa plataforma
+  PENDING    // Enviado para análise da Meta
+  APPROVED   // Aprovado pela Meta, pronto para disparos
+  REJECTED   // Rejeitado pela Meta
+}
+
+// Estado atual de uma campanha de marketing em massa
+enum CampaignStatus {
+  DRAFT      // Em rascunho
+  SCHEDULED  // Agendada para um horário futuro
+  RUNNING    // Disparos sendo processados
+  COMPLETED  // Todos os disparos concluídos
+  FAILED     // Falha no motor de execução da campanha
+}
+
+// 1. OPERADOR HUMANO (Controle de Acesso)
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(OPERATOR)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 2. GESTÃO DE CLIENTES/CONTATOS
+model Contact {
+  id        String    @id @default(uuid())
+  phone     String    @unique // Número em formato internacional (ex: 5511999999999)
+  name      String
+  tags      String[]  @default([]) // Tags para segmentação de campanhas (ex: ["lead", "VIP"])
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+// 3. HISTÓRICO DE MENSAGENS (Atendimento e Auditoria)
+model Message {
+  id            String           @id @default(uuid())
+  metaMessageId String?          @unique // ID exclusivo retornado pela API da Meta (essencial para Webhook de Status)
+  contactId     String
+  contact       Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  direction     MessageDirection
+  type          MessageType      @default(TEXT)
+  content       String           // O texto da mensagem ou a URL do arquivo de mídia
+  status        MessageStatus    @default(SENT)
+  timestamp     DateTime         @default(now())
+  
+  // Relacionamento opcional com campanhas (se a mensagem foi disparada por um lote de marketing)
+  campaignId    String?
+  campaign      Campaign?        @relation(fields: [campaignId], references: [id])
+}
+
+// 4. TEMPLATES HOMOLOGADOS (Meta WhatsApp API)
+model Template {
+  id             String         @id @default(uuid())
+  metaTemplateId String?        @unique // ID correspondente no painel da Meta Business Suite
+  name           String         @unique // Identificador alfanumérico (ex: "boas_vindas_vip")
+  category       String         // MARKETING, UTILITY ou AUTHENTICATION
+  language       String         // pt_BR, en_US, etc.
+  body           String         // Conteúdo: "Olá {{1}}, confirmamos o seu pedido {{2}}!"
+  status         TemplateStatus @default(DRAFT)
+  variables      String[]       // Armazena a ordem de variáveis sugerida, ex: ["nome_cliente", "numero_pedido"]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  campaigns      Campaign[]
+}
+
+// 5. CAMPANHAS E DISPAROS EM MASSA
+model Campaign {
+  id            String         @id @default(uuid())
+  name          String
+  templateId    String
+  template      Template       @relation(fields: [templateId], references: [id])
+  status        CampaignStatus @default(DRAFT)
+  scheduledTime DateTime?      // Nulo para disparos imediatos
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  // Lista de tags de contatos alvo para a transmissão (ex: ["VIP", "Alunos"])
+  targetTags    String[]
+  
+  // Mensagens geradas por essa campanha
+  messages      Message[]
+}
