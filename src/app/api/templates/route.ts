@@ -71,8 +71,33 @@ export async function POST(request: NextRequest) {
           if (twilioResponse.ok) {
             const twilioData = await twilioResponse.json()
             finalMetaTemplateId = twilioData.sid // O Content SID começará com "HX..."
-            initialStatus = 'APPROVED' // Já entra como aprovado
+            initialStatus = 'PENDING' // Começa pendente até aprovação real da Meta
             console.log(`🌟 [Twilio Content API] Template cadastrado com pleno sucesso! SID gerado: ${finalMetaTemplateId}`)
+
+            // Submete o template automaticamente para análise e aprovação da Meta
+            try {
+              console.log(`📡 [Twilio Content API] Solicitando aprovação Meta/WhatsApp para o SID ${finalMetaTemplateId}...`)
+              const approvalResponse = await fetch(`https://content.twilio.com/v1/Content/${finalMetaTemplateId}/ApprovalRequests/whatsapp`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  name: cleanName,
+                  category: category // MARKETING, UTILITY, ou AUTHENTICATION
+                })
+              })
+
+              if (approvalResponse.ok) {
+                console.log(`🌟 [Twilio Content API] Solicitação de aprovação enviada com sucesso para a Meta!`)
+              } else {
+                const approvalErr = await approvalResponse.text()
+                console.warn(`⚠️ [Twilio Content API] Erro ao solicitar aprovação para a Meta:`, approvalErr)
+              }
+            } catch (approvalErr: any) {
+              console.error(`⚠️ [Twilio Content API] Falha de rede na solicitação de aprovação:`, approvalErr.message)
+            }
           } else {
             const twilioErr = await twilioResponse.text()
             console.warn('⚠️ [Twilio Content API] Erro ao cadastrar template automaticamente:', twilioErr)
