@@ -41,6 +41,7 @@ export default function TemplatesPage() {
   const [language, setLanguage] = useState('pt_BR')
   const [body, setBody] = useState('')
   const [variablesStr, setVariablesStr] = useState('')
+  const [metaTemplateId, setMetaTemplateId] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -52,6 +53,7 @@ export default function TemplatesPage() {
   const [editLanguage, setEditLanguage] = useState('pt_BR')
   const [editBody, setEditBody] = useState('')
   const [editVariablesStr, setEditVariablesStr] = useState('')
+  const [editMetaTemplateId, setEditMetaTemplateId] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
   const [editErrorMsg, setEditErrorMsg] = useState('')
 
@@ -101,7 +103,8 @@ export default function TemplatesPage() {
           category,
           language,
           body,
-          variables
+          variables,
+          metaTemplateId: metaTemplateId.trim() || undefined
         })
       })
 
@@ -109,6 +112,7 @@ export default function TemplatesPage() {
         setName('')
         setBody('')
         setVariablesStr('')
+        setMetaTemplateId('')
         setIsNewModalOpen(false)
         loadTemplates()
       } else {
@@ -169,6 +173,7 @@ export default function TemplatesPage() {
     setEditLanguage(tpl.language)
     setEditBody(tpl.body)
     setEditVariablesStr(tpl.variables.join(', '))
+    setEditMetaTemplateId(tpl.metaTemplateId || '')
     setEditErrorMsg('')
     setIsEditModalOpen(true)
   }
@@ -194,7 +199,8 @@ export default function TemplatesPage() {
           category: editCategory,
           language: editLanguage,
           body: editBody,
-          variables
+          variables,
+          metaTemplateId: editMetaTemplateId.trim() || null
         })
       })
 
@@ -338,6 +344,14 @@ export default function TemplatesPage() {
                 </div>
               </div>
 
+              {/* Exibição do SID da Twilio se ativo */}
+              {tpl.metaTemplateId && (
+                <div className="mb-3 text-[10px] text-slate-500 font-mono flex items-center justify-between bg-slate-950/40 p-2 rounded-lg border border-slate-900/40 select-all shrink-0">
+                  <span className="text-slate-600 font-sans font-bold uppercase tracking-wider text-[9px]">Twilio SID:</span>
+                  <span title="Dê dois cliques para copiar">{tpl.metaTemplateId}</span>
+                </div>
+              )}
+
               {/* Variáveis e Rodapé */}
               <div className="border-t border-slate-900/60 pt-4 flex items-center justify-between text-[11px] text-slate-500">
                 <div className="flex items-center gap-1">
@@ -424,6 +438,18 @@ export default function TemplatesPage() {
                   value={variablesStr}
                   onChange={(e) => setVariablesStr(e.target.value)}
                 />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Twilio Content SID (ID HX) - Opcional</label>
+                <input
+                  type="text"
+                  placeholder="Ex: HX7019c4..."
+                  className="bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-sm px-4 py-3 rounded-xl text-slate-100 focus:outline-none transition-all font-mono"
+                  value={metaTemplateId}
+                  onChange={(e) => setMetaTemplateId(e.target.value)}
+                />
+                <span className="text-[10px] text-slate-500">Insira caso queira associar manualmente a um template já aprovado na Twilio.</span>
               </div>
 
               {errorMsg && (
@@ -529,6 +555,18 @@ export default function TemplatesPage() {
                   value={editVariablesStr}
                   onChange={(e) => setEditVariablesStr(e.target.value)}
                 />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Twilio Content SID (ID HX) - Opcional</label>
+                <input
+                  type="text"
+                  placeholder="Ex: HX7019c4..."
+                  className="bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-sm px-4 py-3 rounded-xl text-slate-100 focus:outline-none transition-all font-mono"
+                  value={editMetaTemplateId}
+                  onChange={(e) => setEditMetaTemplateId(e.target.value)}
+                />
+                <span className="text-[10px] text-slate-500">Insira caso queira associar manualmente a um template já aprovado na Twilio.</span>
               </div>
 
               {editErrorMsg && (

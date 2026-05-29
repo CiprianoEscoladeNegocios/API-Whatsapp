@@ -105,7 +105,7 @@ export class TwilioWhatsAppService {
    * Envia uma mensagem baseada em Template aprovado pelo Twilio/WhatsApp
    */
   static async sendTemplateMessage({ to, templateName, languageCode = 'pt_BR', components = [] }: SendTemplateMessageParams) {
-    const { isConfigured } = this.getCredentials()
+    const { accountSid, authToken, whatsappFrom, isConfigured } = this.getCredentials()
 
     if (!isConfigured) {
       console.warn('⚠️ CREDENCIAIS DO TWILIO NÃO CONFIGURADAS. Simulando envio de Template local (Mock Mode)...')
@@ -129,7 +129,63 @@ export class TwilioWhatsAppService {
         throw new Error(`Template com nome "${templateName}" não encontrado no banco de dados.`)
       }
 
-      // Interpola as variáveis {{1}}, {{2}} etc no corpo do template
+      const cleanPhone = to.replace(/\D/g, '')
+      const twilioTo = `whatsapp:+${cleanPhone}`
+
+      // Se o template possuir o ContentSid da Twilio (iniciando com HX)
+      if (template.metaTemplateId && template.metaTemplateId.startsWith('HX')) {
+        console.log(`📤 Disparando template oficial via Twilio Content API. SID: ${template.metaTemplateId}`)
+        
+        // Mapeia os parâmetros do body para um JSON de variáveis no formato {"1": "Valor1", "2": "Valor2"}
+        const variablesMap: Record<string, string> = {}
+        const bodyComponent = components.find((c: any) => c.type === 'body')
+        
+        if (bodyComponent && bodyComponent.parameters) {
+          bodyComponent.parameters.forEach((param: any, index: number) => {
+            variablesMap[String(index + 1)] = param.text
+          })
+        }
+
+        const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`
+        const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64')
+
+        const bodyParams = new URLSearchParams()
+        bodyParams.append('To', twilioTo)
+        bodyParams.append('From', whatsappFrom)
+        bodyParams.append('ContentSid', template.metaTemplateId)
+        
+        if (Object.keys(variablesMap).length > 0) {
+          bodyParams.append('ContentVariables', JSON.stringify(variablesMap))
+        }
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': authHeader,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: bodyParams.toString()
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          console.error('❌ Erro retornado pela Twilio Content API:', data)
+          throw new Error(data.message || 'Falha ao enviar template via Twilio Content API')
+        }
+
+        console.log('✅ Template enviado com sucesso pela Twilio Content API. SID:', data.sid)
+        return {
+          sid: data.sid,
+          messages: [
+            {
+              id: data.sid
+            }
+          ]
+        }
+      }
+
+      // Caso contrário, faz fallback para o envio de texto livre clássico
       let textBody = template.body
       const bodyComponent = components.find((c: any) => c.type === 'body')
       
@@ -139,9 +195,7 @@ export class TwilioWhatsAppService {
         })
       }
 
-      // No Twilio, para disparar um template pré-aprovado, nós enviamos o corpo exato da mensagem interpolada.
-      // O ecossistema do Twilio faz a associação automática com o template homologado.
-      console.log(`📤 Disparando template interpolado via Twilio: "${textBody}"`)
+      console.log(`📤 Disparando template interpolado de texto livre (Fallback): "${textBody}"`)
       
       return await this.sendTextMessage({
         to,
