@@ -47,6 +47,45 @@ interface Contact {
   } | null
 }
 
+// SINTETIZADOR BIFÔNICO PREMIUM DE ÁUDIO (Web Audio API)
+// Desenvolvido sob as diretrizes de excelência tecnológica da Cipriano Escola de Negócios.
+const playNotificationSound = () => {
+  if (typeof window === 'undefined') return
+  try {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext
+    if (!AudioContext) return
+    const ctx = new AudioContext()
+    
+    // Nota 1 (C5 - 523.25 Hz)
+    const osc1 = ctx.createOscillator()
+    const gain1 = ctx.createGain()
+    osc1.type = 'sine'
+    osc1.frequency.setValueAtTime(523.25, ctx.currentTime)
+    gain1.gain.setValueAtTime(0.06, ctx.currentTime)
+    gain1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15)
+    osc1.connect(gain1)
+    gain1.connect(ctx.destination)
+    
+    osc1.start()
+    osc1.stop(ctx.currentTime + 0.15)
+    
+    // Nota 2 (E5 - 659.25 Hz, com pequeno delay harmônico)
+    const osc2 = ctx.createOscillator()
+    const gain2 = ctx.createGain()
+    osc2.type = 'sine'
+    osc2.frequency.setValueAtTime(659.25, ctx.currentTime + 0.08)
+    gain2.gain.setValueAtTime(0.06, ctx.currentTime + 0.08)
+    gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3)
+    osc2.connect(gain2)
+    gain2.connect(ctx.destination)
+    
+    osc2.start(ctx.currentTime + 0.08)
+    osc2.stop(ctx.currentTime + 0.3)
+  } catch (err) {
+    console.warn('⚠️ Web Audio API: Falha ao tocar áudio de notificação comercial:', err)
+  }
+}
+
 export default function ChatPage() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [activeContact, setActiveContact] = useState<Contact | null>(null)
@@ -76,6 +115,7 @@ export default function ChatPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const notifiedMessageIds = useRef<Set<string>>(new Set())
 
   // Emojis mais comuns do WhatsApp corporativo
   const emojis = ['😀', '😂', '😍', '👍', '🙏', '🚀', '🔥', '👏', '🎉', '💡', '🏆', '💼', '📈', '💬', '📱', '✅', '❌', '⚠️']
@@ -187,6 +227,13 @@ export default function ChatPage() {
         if (prevMessages.some(m => m.id === newMessage.id || (m.metaMessageId && m.metaMessageId === newMessage.metaMessageId))) {
           return prevMessages
         }
+
+        // Toca notificação sonora de mensagem recebida (INBOUND)
+        if (newMessage.direction === 'INBOUND' && !notifiedMessageIds.current.has(newMessage.id)) {
+          notifiedMessageIds.current.add(newMessage.id)
+          playNotificationSound()
+        }
+
         return [...prevMessages, newMessage]
       })
     }
@@ -205,6 +252,74 @@ export default function ChatPage() {
     }
   })
 
+  // 6.B POLLING INTELIGENTE DE BACKUP (Contingência para chaves inválidas do Pusher)
+  // Roda a cada 4 segundos apenas na conversa ativa
+  useEffect(() => {
+    if (!activeContact) return
+    const contactId = activeContact.id
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/chat/messages?contactId=${contactId}`)
+        if (res.ok) {
+          const data = await res.json()
+          
+          setMessages((prevMessages) => {
+            const hasChanges = data.some((newMsg: any) => {
+              const existing = prevMessages.find(m => m.id === newMsg.id || (m.metaMessageId && m.metaMessageId === newMsg.metaMessageId))
+              return !existing || existing.status !== newMsg.status
+            })
+
+            if (!hasChanges) return prevMessages
+
+            const merged = [...prevMessages]
+            data.forEach((newMsg: any) => {
+              const idx = merged.findIndex(m => m.id === newMsg.id || (m.metaMessageId && m.metaMessageId === newMsg.metaMessageId) || (m.id.startsWith('temp_') && m.content === newMsg.content))
+              if (idx !== -1) {
+                merged[idx] = newMsg
+              } else {
+                merged.push(newMsg)
+                
+                if (newMsg.direction === 'INBOUND' && !notifiedMessageIds.current.has(newMsg.id)) {
+                  notifiedMessageIds.current.add(newMsg.id)
+                  playNotificationSound()
+                }
+              }
+            })
+            return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+          })
+        }
+      } catch (err) {
+        console.warn('Erro silencioso no backup polling de mensagens:', err)
+      }
+    }, 4000)
+
+    return () => clearInterval(interval)
+  }, [activeContact])
+
+  // Roda a cada 8 segundos para manter a barra lateral atualizada
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/contacts?withMessages=true')
+        if (res.ok) {
+          const data = await res.json()
+          setContacts((prevContacts) => {
+            const isDifferent = JSON.stringify(prevContacts.map(c => ({ id: c.id, last: c.lastMessage }))) !==
+                                JSON.stringify(data.map((c: any) => ({ id: c.id, last: c.lastMessage })))
+            
+            if (!isDifferent) return prevContacts
+            return data
+          })
+        }
+      } catch (err) {
+        console.warn('Erro silencioso no backup polling de contatos:', err)
+      }
+    }, 8000)
+
+    return () => clearInterval(interval)
+  }, [])
+
   // 7. ENVIO DE MENSAGEM (OUTBOUND)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -214,6 +329,21 @@ export default function ChatPage() {
     setNewMessageText('')
     setIsSending(true)
     setShowEmojiPicker(false)
+
+    // Criação da mensagem otimista temporária (UI Instantânea)
+    const tempId = `temp_${Date.now()}`
+    const tempMessage: Message = {
+      id: tempId,
+      metaMessageId: null,
+      direction: 'OUTBOUND',
+      type: 'TEXT',
+      content: messageContent,
+      status: 'SENT',
+      timestamp: new Date().toISOString()
+    }
+
+    // Adiciona instantaneamente no estado local para feedback imediato
+    setMessages((prev) => [...prev, tempMessage])
 
     try {
       const res = await fetch('/api/chat/send', {
@@ -229,8 +359,17 @@ export default function ChatPage() {
       if (!res.ok) {
         throw new Error('Falha ao enviar mensagem pela API')
       }
+
+      const realMessage = await res.json()
+      
+      // Atualiza a mensagem temporária com a mensagem real gravada no banco
+      setMessages((prev) => 
+        prev.map((msg) => msg.id === tempId ? realMessage : msg)
+      )
     } catch (err) {
       console.error('Erro de envio de mensagem no frontend:', err)
+      // Remove a mensagem otimista em caso de falha real
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId))
       alert('Não foi possível enviar a mensagem. Verifique a conexão.')
     } finally {
       setIsSending(false)
