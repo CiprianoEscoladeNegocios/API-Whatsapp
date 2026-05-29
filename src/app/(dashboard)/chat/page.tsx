@@ -17,7 +17,9 @@ import {
   Smile,
   FileText,
   CornerUpRight,
-  Loader2
+  Loader2,
+  X,
+  Sparkles
 } from 'lucide-react'
 import { usePusher } from '@/hooks/usePusher'
 
@@ -64,6 +66,14 @@ export default function ChatPage() {
   const [selectedContacts, setSelectedContacts] = useState<string[]>([])
   const [isForwarding, setIsForwarding] = useState(false)
 
+  // Estados para disparo individual de templates Meta aprovados
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [approvedTemplates, setApprovedTemplates] = useState<any[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<any | null>(null)
+  const [templateVariables, setTemplateVariables] = useState<string[]>([])
+  const [templateSearchTerm, setTemplateSearchTerm] = useState('')
+  const [isSendingTemplate, setIsSendingTemplate] = useState(false)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -87,6 +97,23 @@ export default function ChatPage() {
       }
     }
     fetchContacts()
+  }, [])
+
+  // 1.B CARREGAMENTO DE TEMPLATES APROVADOS DA META
+  useEffect(() => {
+    async function fetchTemplates() {
+      try {
+        const res = await fetch('/api/templates')
+        if (res.ok) {
+          const data = await res.json()
+          // Filtra apenas templates APPROVED pela Meta
+          setApprovedTemplates(data.filter((tpl: any) => tpl.status === 'APPROVED'))
+        }
+      } catch (err) {
+        console.error('Erro ao buscar templates aprovados:', err)
+      }
+    }
+    fetchTemplates()
   }, [])
 
   // 2. CARREGAMENTO DE HISTÓRICO DE MENSAGENS AO SELECIONAR UM CONTATO
@@ -642,6 +669,20 @@ export default function ChatPage() {
                   <Smile className="w-5 h-5" />
                 </button>
 
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowTemplateModal(true)
+                    setSelectedTemplate(null)
+                    setTemplateVariables([])
+                  }}
+                  disabled={isSending || isUploading}
+                  className="text-slate-500 hover:text-emerald-400 transition-colors p-2 hover:bg-slate-900/50 rounded-xl flex items-center justify-center shrink-0"
+                  title="Disparar template aprovado pela Meta ⚡"
+                >
+                  <Sparkles className="w-5 h-5" />
+                </button>
+
                 <input
                   type="text"
                   placeholder="Digite uma mensagem..."
@@ -766,6 +807,214 @@ export default function ChatPage() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE DISPARO DE TEMPLATES META APROVADOS */}
+      {showTemplateModal && activeContact && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-[500px] bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh] animate-fade-in">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3 shrink-0">
+              <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-emerald-400" />
+                <span>Disparar Template Meta</span>
+              </h3>
+              <button 
+                type="button"
+                onClick={() => setShowTemplateModal(false)}
+                className="text-slate-500 hover:text-slate-300 transition-colors p-1 hover:bg-slate-800 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Conteúdo Principal */}
+            {!selectedTemplate ? (
+              // 1. LISTAGEM DE TEMPLATES
+              <div className="flex-1 flex flex-col overflow-hidden min-h-[300px]">
+                <p className="text-xs text-slate-400 mb-3">
+                  Inicie ou reabra uma conversa ativa com <strong>{activeContact.name}</strong> (+{activeContact.phone}) enviando um template aprovado pela Meta:
+                </p>
+                
+                {/* Busca */}
+                <div className="relative mb-3 shrink-0">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Buscar template por nome..."
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-600 text-xs pl-9 pr-4 py-2 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none transition-all"
+                    value={templateSearchTerm}
+                    onChange={(e) => setTemplateSearchTerm(e.target.value)}
+                  />
+                </div>
+
+                {/* Lista com scroll */}
+                <div className="flex-1 overflow-y-auto pr-1 gap-2 flex flex-col min-h-0">
+                  {approvedTemplates.length === 0 ? (
+                    <div className="text-center p-8 text-xs text-slate-600">
+                      Nenhum template APROVADO encontrado no banco de dados. Cadastre e aprove seus templates na aba "Templates"!
+                    </div>
+                  ) : approvedTemplates.filter(t => t.name.toLowerCase().includes(templateSearchTerm.toLowerCase())).length === 0 ? (
+                    <div className="text-center p-8 text-xs text-slate-600">
+                      Nenhum template correspondente à busca.
+                    </div>
+                  ) : (
+                    approvedTemplates
+                      .filter(t => t.name.toLowerCase().includes(templateSearchTerm.toLowerCase()))
+                      .map((tpl) => (
+                        <div
+                          key={tpl.id}
+                          onClick={() => {
+                            setSelectedTemplate(tpl)
+                            setTemplateVariables(Array(tpl.variables.length).fill(''))
+                          }}
+                          className="p-3 bg-slate-950/60 hover:bg-slate-950 border border-slate-950 hover:border-slate-800 rounded-2xl cursor-pointer transition-all flex flex-col gap-2 group"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] bg-emerald-950/60 text-emerald-400 border border-emerald-500/20 font-bold px-2 py-0.5 rounded-lg">
+                              {tpl.category}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-medium">
+                              {tpl.variables.length > 0 ? `${tpl.variables.length} variáveis` : 'Sem variáveis'}
+                            </span>
+                          </div>
+                          <span className="text-xs font-bold text-slate-200 group-hover:text-emerald-400 transition-colors">
+                            {tpl.name}
+                          </span>
+                          <p className="text-[10px] text-slate-500 line-clamp-2 italic font-mono bg-slate-900/60 p-2 rounded-xl border border-slate-900">
+                            {tpl.body}
+                          </p>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              // 2. FORMULÁRIO DE VARIÁVEIS
+              <div className="flex-1 flex flex-col overflow-hidden min-h-[300px]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTemplate(null)}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1.5 mb-4 self-start"
+                >
+                  ← Voltar para listagem
+                </button>
+
+                <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-4 min-h-0">
+                  <div>
+                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Template Selecionado</h4>
+                    <span className="text-sm font-extrabold text-white">{selectedTemplate.name}</span>
+                  </div>
+
+                  {/* Inputs das Variáveis se houver */}
+                  {selectedTemplate.variables.length > 0 ? (
+                    <div className="flex flex-col gap-3">
+                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Variáveis de Preenchimento</h4>
+                      {selectedTemplate.variables.map((vName: string, index: number) => (
+                        <div key={index} className="flex flex-col gap-1.5">
+                          <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                            {vName.replace(/_/g, ' ')} ({"{{" + (index + 1) + "}}"})
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder={index === 0 ? `Ex: ${activeContact.name}` : `Digite o valor para {{${index + 1}}}`}
+                            className="bg-slate-950 border border-slate-800 focus:border-emerald-600 text-xs px-3.5 py-2.5 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none transition-all"
+                            value={templateVariables[index] || ''}
+                            onChange={(e) => {
+                              const updated = [...templateVariables]
+                              updated[index] = e.target.value
+                              setTemplateVariables(updated)
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-2xl text-xs text-emerald-400 font-medium">
+                      Este template não exige variáveis dinâmicas. Você pode enviá-lo diretamente!
+                    </div>
+                  )}
+
+                  {/* Pré-visualização do Corpo em tempo real */}
+                  <div className="flex flex-col gap-1.5 mt-2">
+                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Pré-visualização do Envio</h4>
+                    <div className="bg-slate-950 border border-slate-800/80 p-3.5 rounded-2xl text-xs text-slate-400 font-mono leading-relaxed whitespace-pre-line border-l-4 border-l-emerald-500">
+                      {(() => {
+                        let previewText = selectedTemplate.body
+                        templateVariables.forEach((val, idx) => {
+                          const placeholder = val || `{{${idx + 1}}}`
+                          previewText = previewText.replace(`{{${idx + 1}}}`, placeholder)
+                        })
+                        return previewText
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Botões do Formulário de Envio */}
+                <div className="flex items-center gap-3 mt-4 border-t border-slate-800 pt-4 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateModal(false)}
+                    className="flex-1 bg-slate-950 border border-slate-800 hover:bg-slate-950/60 text-slate-400 py-3 rounded-2xl text-xs font-bold transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (isSendingTemplate) return
+                      setIsSendingTemplate(true)
+                      try {
+                        const res = await fetch('/api/chat/send-template', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            contactId: activeContact.id,
+                            templateId: selectedTemplate.id,
+                            variables: templateVariables
+                          })
+                        })
+
+                        if (!res.ok) {
+                          const errData = await res.json()
+                          throw new Error(errData.error || 'Erro ao enviar template.')
+                        }
+
+                        console.log('✅ Template disparado com pleno sucesso no Live Chat!')
+                        setShowTemplateModal(false)
+                      } catch (err: any) {
+                        console.error('Erro ao enviar template no frontend:', err)
+                        alert(err.message || 'Não foi possível disparar o template. Verifique as credenciais.')
+                      } finally {
+                        setIsSendingTemplate(false)
+                      }
+                    }}
+                    disabled={
+                      selectedTemplate.variables.some((_: any, idx: number) => !templateVariables[idx]?.trim()) ||
+                      isSendingTemplate
+                    }
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white py-3 rounded-2xl text-xs font-bold transition-all shadow-lg hover:shadow-emerald-600/10 flex items-center justify-center gap-2"
+                  >
+                    {isSendingTemplate ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Enviando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Enviar Template</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

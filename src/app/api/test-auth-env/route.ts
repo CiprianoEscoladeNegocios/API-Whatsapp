@@ -34,6 +34,7 @@ export async function GET() {
         DATABASE_URL_DEFINED: hasDbUrl,
         NEXTAUTH_SECRET_DEFINED: hasSecret,
         NEXTAUTH_SECRET_LENGTH: secretLength,
+        NEXTAUTH_URL: process.env.NEXTAUTH_URL || 'NÃO DEFINIDA',
         NODE_ENV: process.env.NODE_ENV,
         PUSHER: {
           SERVER_APP_ID_DEFINED: hasPusherAppId,
