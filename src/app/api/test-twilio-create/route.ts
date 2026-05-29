@@ -21,7 +21,7 @@ export async function GET() {
 
     const payload = {
       friendly_name: cleanName,
-      language: 'pt',
+      language: 'pt_BR',
       variables: {
         '1': 'nome_teste'
       },

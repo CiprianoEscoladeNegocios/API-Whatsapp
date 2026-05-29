@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
               friendly_name: cleanName,
-              language: language.split('_')[0], // a Twilio usa ISO de 2 letras (ex: 'pt')
+              language: language, // Envia o código completo aceito pela Twilio (ex: 'pt_BR')
               variables: twilioVariables,
               types: {
                 'twilio/text': {
