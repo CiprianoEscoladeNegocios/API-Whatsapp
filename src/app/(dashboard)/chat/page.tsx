@@ -642,14 +642,23 @@ export default function ChatPage() {
 
   // Renderização dinâmica do conteúdo do balão de mensagens (Mídias & Textos)
   const renderMessageContent = (message: Message) => {
+    // Função auxiliar para resolver a fonte física de mídias privadas via proxy local
+    const getMediaSrc = (url: string) => {
+      if (url.includes('api.twilio.com')) {
+        return `/api/chat/download?url=${encodeURIComponent(url)}`
+      }
+      return url
+    }
+
     if (message.type === 'IMAGE') {
+      const mediaSrc = getMediaSrc(message.content)
       return (
         <div className="max-w-xs overflow-hidden rounded-xl border border-slate-800 bg-slate-950 select-none mt-1 relative group/media">
           <img 
-            src={message.content} 
+            src={mediaSrc} 
             alt="Anexo de Imagem" 
             className="w-full h-auto cursor-pointer hover:scale-[1.02] active:scale-100 transition-all duration-200" 
-            onClick={() => window.open(message.content, '_blank')}
+            onClick={() => window.open(mediaSrc, '_blank')}
           />
           {/* Botão de Download Dedicado */}
           <a
@@ -664,9 +673,10 @@ export default function ChatPage() {
       )
     }
     if (message.type === 'VIDEO') {
+      const mediaSrc = getMediaSrc(message.content)
       return (
         <div className="max-w-xs overflow-hidden rounded-xl border border-slate-800 bg-slate-950 mt-1 relative group/media">
-          <video src={message.content} controls className="w-full max-h-64 rounded-xl" />
+          <video src={mediaSrc} controls className="w-full max-h-64 rounded-xl" />
           {/* Botão de Download Dedicado */}
           <a
             href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
@@ -680,9 +690,10 @@ export default function ChatPage() {
       )
     }
     if (message.type === 'AUDIO') {
+      const mediaSrc = getMediaSrc(message.content)
       return (
         <div className="py-1 mt-1 max-w-xs flex items-center gap-2 group/media">
-          <audio src={message.content} controls className="w-full h-11 border border-slate-800 rounded-xl" />
+          <audio src={mediaSrc} controls className="w-full h-11 border border-slate-800 rounded-xl" />
           {/* Botão de Download Dedicado */}
           <a
             href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
