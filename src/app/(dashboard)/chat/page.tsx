@@ -52,6 +52,7 @@ interface Contact {
     direction: 'INBOUND' | 'OUTBOUND'
     status: string
     type?: string
+    reaction?: string | null
   } | null
 }
 
@@ -130,6 +131,25 @@ export default function ChatPage() {
       prev.map((msg) =>
         msg.id === messageId ? { ...msg, reaction: emoji } : msg
       )
+    )
+
+    // Atualiza otimista a reação da última mensagem na barra lateral se for o caso!
+    setContacts((prevContacts) =>
+      prevContacts.map((c) => {
+        if (c.id === activeContact?.id && c.lastMessage) {
+          const lastLocalMsg = messages[messages.length - 1]
+          if (lastLocalMsg && lastLocalMsg.id === messageId) {
+            return {
+              ...c,
+              lastMessage: {
+                ...c.lastMessage,
+                reaction: emoji
+              }
+            }
+          }
+        }
+        return c
+      })
     )
 
     try {
@@ -289,11 +309,28 @@ export default function ChatPage() {
     channelName: activeContact ? `chat-${activeContact.id}` : 'dummy-channel',
     eventName: 'message-reaction-updated',
     callback: (data: { messageId: string; reaction: string | null }) => {
-      setMessages((prevMessages) => 
-        prevMessages.map((msg) => 
+      setMessages((prevMessages) => {
+        const updated = prevMessages.map((msg) => 
           msg.id === data.messageId ? { ...msg, reaction: data.reaction } : msg
         )
-      )
+        const lastMsg = updated[updated.length - 1]
+        if (lastMsg && lastMsg.id === data.messageId) {
+          setContacts((prevContacts) =>
+            prevContacts.map((c) =>
+              c.id === activeContact?.id && c.lastMessage
+                ? {
+                    ...c,
+                    lastMessage: {
+                      ...c.lastMessage,
+                      reaction: data.reaction
+                    }
+                  }
+                : c
+            )
+          )
+        }
+        return updated
+      })
     }
   })
 
@@ -393,6 +430,25 @@ export default function ChatPage() {
     // Adiciona instantaneamente no estado local para feedback imediato
     setMessages((prev) => [...prev, tempMessage])
 
+    // Atualiza otimista a barra lateral local de contatos para remover a cor pendente na hora
+    setContacts((prev) =>
+      prev.map((c) =>
+        c.id === activeContact.id
+          ? {
+              ...c,
+              lastMessage: {
+                content: messageContent,
+                timestamp: new Date().toISOString(),
+                direction: 'OUTBOUND',
+                type: 'TEXT',
+                status: 'SENT',
+                reaction: null
+              }
+            }
+          : c
+      )
+    )
+
     try {
       const res = await fetch('/api/chat/send', {
         method: 'POST',
@@ -414,6 +470,25 @@ export default function ChatPage() {
       // Atualiza a mensagem temporária com a mensagem real gravada no banco
       setMessages((prev) => 
         prev.map((msg) => msg.id === tempId ? realMessage : msg)
+      )
+
+      // Sincroniza a barra lateral local com os dados finais reais
+      setContacts((prev) =>
+        prev.map((c) =>
+          c.id === activeContact.id
+            ? {
+                ...c,
+                lastMessage: {
+                  content: realMessage.content,
+                  timestamp: realMessage.timestamp,
+                  direction: realMessage.direction,
+                  type: realMessage.type,
+                  status: realMessage.status,
+                  reaction: realMessage.reaction || null
+                }
+              }
+            : c
+        )
       )
     } catch (err) {
       console.error('Erro de envio de mensagem no frontend:', err)
@@ -467,6 +542,27 @@ export default function ChatPage() {
       })
 
       if (!sendRes.ok) throw new Error('Falha ao enviar o anexo para o chat')
+
+      const realMediaMsg = await sendRes.json()
+
+      // Atualiza a barra lateral local de contatos para remover a cor pendente na hora
+      setContacts((prev) =>
+        prev.map((c) =>
+          c.id === activeContact.id
+            ? {
+                ...c,
+                lastMessage: {
+                  content: realMediaMsg.content,
+                  timestamp: realMediaMsg.timestamp,
+                  direction: realMediaMsg.direction,
+                  type: realMediaMsg.type,
+                  status: realMediaMsg.status,
+                  reaction: null
+                }
+              }
+            : c
+        )
+      )
 
     } catch (err) {
       console.error('Erro no fluxo de anexo de mídias:', err)
@@ -662,7 +758,9 @@ export default function ChatPage() {
           ) : (
             filteredContacts.map((contact) => {
               const isSelected = activeContact?.id === contact.id
-              const isPending = contact.lastMessage && contact.lastMessage.direction === 'INBOUND'
+              const isPending = contact.lastMessage && 
+                                contact.lastMessage.direction === 'INBOUND' && 
+                                !contact.lastMessage.reaction
               const firstLetter = contact.name.substring(0, 1).toUpperCase()
               const lastMsgTime = contact.lastMessage 
                 ? new Date(contact.lastMessage.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })

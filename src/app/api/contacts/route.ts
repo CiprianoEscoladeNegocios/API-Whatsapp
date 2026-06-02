@@ -40,7 +40,8 @@ export async function GET(request: NextRequest) {
           timestamp: lastMessage.timestamp,
           direction: lastMessage.direction,
           status: lastMessage.status,
-          type: lastMessage.type
+          type: lastMessage.type,
+          reaction: lastMessage.reaction
         } : null
       }
     }).sort((a, b) => {

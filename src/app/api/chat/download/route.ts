@@ -3,9 +3,10 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
+  let fileUrl: string | null = null
   try {
     const { searchParams } = new URL(request.url)
-    const fileUrl = searchParams.get('url')
+    fileUrl = searchParams.get('url')
 
     if (!fileUrl) {
       return NextResponse.json({ error: 'Parâmetro url é obrigatório' }, { status: 400 })
@@ -31,8 +32,8 @@ export async function GET(request: NextRequest) {
     })
 
     if (!response.ok) {
-      console.error(`❌ [Proxy Download] Erro ao buscar arquivo remoto. Status: ${response.status}`)
-      return NextResponse.json({ error: 'Não foi possível recuperar o arquivo remoto' }, { status: response.status })
+      console.warn(`⚠️ [Proxy Download Fallback] Falha ao baixar arquivo remoto. Redirecionando diretamente para a URL do arquivo: ${fileUrl}`)
+      return NextResponse.redirect(new URL(fileUrl))
     }
 
     const contentType = response.headers.get('content-type') || 'application/octet-stream'
@@ -57,6 +58,10 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('❌ [Proxy Download Error] Erro crítico no download proxy:', error)
+    if (fileUrl) {
+      console.log(`📡 [Proxy Download Fallback Catch] Redirecionando à URL do arquivo físico original: ${fileUrl}`)
+      return NextResponse.redirect(new URL(fileUrl))
+    }
     return NextResponse.json({ error: 'Erro interno do servidor', details: error.message }, { status: 500 })
   }
 }
