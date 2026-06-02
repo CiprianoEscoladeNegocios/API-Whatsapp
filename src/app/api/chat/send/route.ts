@@ -5,7 +5,7 @@ import { pusherServer } from '@/lib/pusher'
 
 export async function POST(request: NextRequest) {
   try {
-    const { contactId, content, type = 'TEXT' } = await request.json()
+    const { contactId, content, type = 'TEXT', replyToId } = await request.json()
 
     if (!contactId || !content) {
       return NextResponse.json({ error: 'Parâmetros inválidos' }, { status: 400 })
@@ -41,6 +41,17 @@ export async function POST(request: NextRequest) {
         type: type as any,
         content,
         status: isMock ? 'DELIVERED' : 'SENT', // Em mock pulamos direto para entregue para simular dinamismo
+        replyToId: replyToId || null,
+      },
+      include: {
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            direction: true
+          }
+        }
       }
     })
 
@@ -57,7 +68,8 @@ export async function POST(request: NextRequest) {
         content: newMessage.content,
         status: newMessage.status,
         timestamp: newMessage.timestamp,
-        contactId: newMessage.contactId
+        contactId: newMessage.contactId,
+        replyTo: newMessage.replyTo
       })
 
       // 5. Dispara evento via Pusher na lista lateral para atualizar o balão "última mensagem"

@@ -104,14 +104,18 @@ export async function POST(request: NextRequest) {
       }
 
       // A.2) PROCESSAMENTO DE MENSAGENS RECEBIDAS (Mensagens de entrada dos clientes)
-      if (bodyText && rawFrom) {
+      // Processa se houver corpo de texto OU se houver arquivos de mídia anexados
+      const numMedia = parseInt(formData.get('NumMedia') as string || '0', 10)
+      const hasMedia = numMedia > 0
+
+      if ((bodyText || hasMedia) && rawFrom) {
         // Limpa o número do cliente (remove "whatsapp:" e remove caracteres não numéricos)
         // Desta forma, mantemos o padrão limpo do banco (ex: 5511999999999)
         const customerPhone = rawFrom.replace('whatsapp:', '').replace(/\D/g, '')
         const customerName = (formData.get('ProfileName') as string) || 'Cliente WhatsApp'
 
         try {
-          console.log(`⏳ [Twilio Webhook] Gravando mensagem inbound de +${customerPhone} no Supabase...`)
+          console.log(`⏳ [Twilio Webhook] Gravando mensagens inbound de +${customerPhone} no banco de dados...`)
           
           // Upsert do Contato no banco de dados para garantir que ele exista
           const contact = await prisma.contact.upsert({
@@ -124,45 +128,94 @@ export async function POST(request: NextRequest) {
             }
           })
 
-          // Salva a nova mensagem inbound no banco de dados
-          const newMessage = await prisma.message.create({
-            data: {
-              metaMessageId: messageSid,
-              contactId: contact.id,
-              direction: 'INBOUND',
-              type: 'TEXT',
-              content: bodyText,
-              status: 'READ' // Entra direto como lida
+          const createdMessages: any[] = []
+
+          // 1. Se houver texto (legenda ou mensagem livre), salva a mensagem de texto
+          if (bodyText) {
+            const textMessage = await prisma.message.create({
+              data: {
+                metaMessageId: messageSid,
+                contactId: contact.id,
+                direction: 'INBOUND',
+                type: 'TEXT',
+                content: bodyText,
+                status: 'READ' // Entra direto como lida
+              }
+            })
+            createdMessages.push(textMessage)
+            console.log(`📩 [Twilio Webhook] Nova mensagem inbound de texto salva com sucesso! Contato: ${contact.name}, Conteúdo: ${bodyText}`)
+          }
+
+          // 2. Se houver arquivos de mídia, salva cada um deles individualmente
+          if (hasMedia) {
+            for (let i = 0; i < numMedia; i++) {
+              const mediaUrl = formData.get(`MediaUrl${i}`) as string
+              const mediaContentType = formData.get(`MediaContentType${i}`) as string || ''
+
+              if (mediaUrl) {
+                // Classifica o tipo de mídia
+                let mediaType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT' = 'DOCUMENT'
+                if (mediaContentType.startsWith('image/')) {
+                  mediaType = 'IMAGE'
+                } else if (mediaContentType.startsWith('video/')) {
+                  mediaType = 'VIDEO'
+                } else if (mediaContentType.startsWith('audio/') || mediaContentType.startsWith('voice/')) {
+                  mediaType = 'AUDIO'
+                }
+
+                // Define um metaMessageId único para evitar colisão se já salvamos a de texto ou outras mídias
+                const uniqueMetaMessageId = createdMessages.length === 0 
+                  ? messageSid 
+                  : `${messageSid}_media_${i}`
+
+                const mediaMessage = await prisma.message.create({
+                  data: {
+                    metaMessageId: uniqueMetaMessageId,
+                    contactId: contact.id,
+                    direction: 'INBOUND',
+                    type: mediaType,
+                    content: mediaUrl,
+                    status: 'READ'
+                  }
+                })
+                createdMessages.push(mediaMessage)
+                console.log(`📩 [Twilio Webhook] Novo anexo inbound do tipo ${mediaType} salvo com sucesso! Contato: ${contact.name}, URL: ${mediaUrl}`)
+              }
             }
-          })
+          }
 
-          console.log(`📩 [Twilio Webhook] Nova mensagem inbound salva com sucesso! Contato: ${contact.name}, Conteúdo: ${bodyText}`)
+          console.log(`📩 [Twilio Webhook] Gravou ${createdMessages.length} mensagens inbound para ${contact.name}!`)
 
-          // Notifica via Pusher (blindado contra falhas)
+          // 3. Notifica via Pusher (blindado contra falhas) para cada mensagem criada
           try {
-            // Notifica o chat individual via Pusher
-            await pusherServer.trigger(`chat-${contact.id}`, 'new-message', {
-              id: newMessage.id,
-              metaMessageId: newMessage.metaMessageId,
-              direction: newMessage.direction,
-              type: newMessage.type,
-              content: newMessage.content,
-              status: newMessage.status,
-              timestamp: newMessage.timestamp,
-              contactId: newMessage.contactId
-            })
+            for (const msg of createdMessages) {
+              // Notifica o chat individual via Pusher
+              await pusherServer.trigger(`chat-${contact.id}`, 'new-message', {
+                id: msg.id,
+                metaMessageId: msg.metaMessageId,
+                direction: msg.direction,
+                type: msg.type,
+                content: msg.content,
+                status: msg.status,
+                timestamp: msg.timestamp,
+                contactId: msg.contactId
+              })
+            }
 
-            // ...e atualiza a lista lateral
-            await pusherServer.trigger('chats-sidebar', 'sidebar-update', {
-              contactId: contact.id,
-              lastMessage: {
-                content: newMessage.content,
-                timestamp: newMessage.timestamp,
-                direction: newMessage.direction
-              },
-              contactName: contact.name,
-              contactPhone: contact.phone
-            })
+            // Atualiza a lista lateral com a última mensagem (seja de texto ou de mídia)
+            if (createdMessages.length > 0) {
+              const lastMsg = createdMessages[createdMessages.length - 1]
+              await pusherServer.trigger('chats-sidebar', 'sidebar-update', {
+                contactId: contact.id,
+                lastMessage: {
+                  content: lastMsg.type !== 'TEXT' ? `[${lastMsg.type}]` : lastMsg.content,
+                  timestamp: lastMsg.timestamp,
+                  direction: lastMsg.direction
+                },
+                contactName: contact.name,
+                contactPhone: contact.phone
+              })
+            }
           } catch (pusherErr: any) {
             console.warn('⚠️ [Pusher Warning] Falha ao enviar mensagens inbound via Pusher (Twilio):', pusherErr.message)
           }

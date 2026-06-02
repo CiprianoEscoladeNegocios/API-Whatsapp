@@ -15,6 +15,16 @@ export async function GET(request: NextRequest) {
     // Retorna todo o histórico de mensagens daquele contato ordenadas cronologicamente
     const messages = await prisma.message.findMany({
       where: { contactId },
+      include: {
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            direction: true
+          }
+        }
+      },
       orderBy: { timestamp: 'asc' }
     })
 

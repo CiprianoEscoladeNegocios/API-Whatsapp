@@ -93,6 +93,13 @@ model Message {
   // Relacionamento opcional com campanhas (se a mensagem foi disparada por um lote de marketing)
   campaignId    String?
   campaign      Campaign?        @relation(fields: [campaignId], references: [id])
+
+  // RECURSOS PREMIUM: RESPOSTA (REPLY) E REAÇÃO (REACTION)
+  replyToId     String?
+  replyTo       Message?         @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies       Message[]        @relation("MessageReplies")
+  
+  reaction      String?
 }
 
 // 4. TEMPLATES HOMOLOGADOS (Meta WhatsApp API)

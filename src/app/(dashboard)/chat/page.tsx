@@ -19,7 +19,8 @@ import {
   CornerUpRight,
   Loader2,
   X,
-  Sparkles
+  Sparkles,
+  Download
 } from 'lucide-react'
 import { usePusher } from '@/hooks/usePusher'
 
@@ -31,6 +32,13 @@ interface Message {
   content: string
   status: 'SENT' | 'DELIVERED' | 'READ' | 'FAILED'
   timestamp: string
+  replyTo?: {
+    id: string
+    content: string
+    type: string
+    direction: 'INBOUND' | 'OUTBOUND'
+  } | null
+  reaction?: string | null
 }
 
 interface Contact {
@@ -112,6 +120,30 @@ export default function ChatPage() {
   const [templateVariables, setTemplateVariables] = useState<string[]>([])
   const [templateSearchTerm, setTemplateSearchTerm] = useState('')
   const [isSendingTemplate, setIsSendingTemplate] = useState(false)
+
+  // Recursos premium de respostas e reações
+  const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null)
+
+  const handleReactToMessage = async (messageId: string, emoji: string | null) => {
+    // Atualização otimista local imediata
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId ? { ...msg, reaction: emoji } : msg
+      )
+    )
+
+    try {
+      const res = await fetch('/api/chat/react', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId, reaction: emoji })
+      })
+
+      if (!res.ok) throw new Error('Falha ao reagir à mensagem')
+    } catch (err) {
+      console.error('Erro ao salvar reação:', err)
+    }
+  }
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -252,6 +284,19 @@ export default function ChatPage() {
     }
   })
 
+  // 6.C ESCUTA EM TEMPO REAL INDIVIDUAL: REAÇÕES ATUALIZADAS
+  usePusher({
+    channelName: activeContact ? `chat-${activeContact.id}` : 'dummy-channel',
+    eventName: 'message-reaction-updated',
+    callback: (data: { messageId: string; reaction: string | null }) => {
+      setMessages((prevMessages) => 
+        prevMessages.map((msg) => 
+          msg.id === data.messageId ? { ...msg, reaction: data.reaction } : msg
+        )
+      )
+    }
+  })
+
   // 6.B POLLING INTELIGENTE DE BACKUP (Contingência para chaves inválidas do Pusher)
   // Roda a cada 4 segundos apenas na conversa ativa
   useEffect(() => {
@@ -326,7 +371,9 @@ export default function ChatPage() {
     if (!activeContact || !newMessageText.trim() || isSending) return
 
     const messageContent = newMessageText.trim()
+    const activeReply = replyingToMessage
     setNewMessageText('')
+    setReplyingToMessage(null)
     setIsSending(true)
     setShowEmojiPicker(false)
 
@@ -339,7 +386,8 @@ export default function ChatPage() {
       type: 'TEXT',
       content: messageContent,
       status: 'SENT',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      replyTo: activeReply
     }
 
     // Adiciona instantaneamente no estado local para feedback imediato
@@ -352,7 +400,8 @@ export default function ChatPage() {
         body: JSON.stringify({
           contactId: activeContact.id,
           content: messageContent,
-          type: 'TEXT'
+          type: 'TEXT',
+          replyToId: activeReply?.id || null
         })
       })
 
@@ -499,45 +548,83 @@ export default function ChatPage() {
   const renderMessageContent = (message: Message) => {
     if (message.type === 'IMAGE') {
       return (
-        <div className="max-w-xs overflow-hidden rounded-xl border border-slate-800 bg-slate-950 select-none mt-1">
+        <div className="max-w-xs overflow-hidden rounded-xl border border-slate-800 bg-slate-950 select-none mt-1 relative group/media">
           <img 
             src={message.content} 
             alt="Anexo de Imagem" 
             className="w-full h-auto cursor-pointer hover:scale-[1.02] active:scale-100 transition-all duration-200" 
             onClick={() => window.open(message.content, '_blank')}
           />
+          {/* Botão de Download Dedicado */}
+          <a
+            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            download
+            title="Baixar Imagem"
+            className="absolute top-2 right-2 p-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all opacity-0 group-hover/media:opacity-100 shadow-lg z-10"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </a>
         </div>
       )
     }
     if (message.type === 'VIDEO') {
       return (
-        <div className="max-w-xs overflow-hidden rounded-xl border border-slate-800 bg-slate-950 mt-1">
+        <div className="max-w-xs overflow-hidden rounded-xl border border-slate-800 bg-slate-950 mt-1 relative group/media">
           <video src={message.content} controls className="w-full max-h-64 rounded-xl" />
+          {/* Botão de Download Dedicado */}
+          <a
+            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            download
+            title="Baixar Vídeo"
+            className="absolute top-2 right-2 p-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all opacity-0 group-hover/media:opacity-100 shadow-lg z-10"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </a>
         </div>
       )
     }
     if (message.type === 'AUDIO') {
       return (
-        <div className="py-1 mt-1 max-w-xs">
+        <div className="py-1 mt-1 max-w-xs flex items-center gap-2 group/media">
           <audio src={message.content} controls className="w-full h-11 border border-slate-800 rounded-xl" />
+          {/* Botão de Download Dedicado */}
+          <a
+            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            download
+            title="Baixar Áudio"
+            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all shadow-lg shrink-0"
+          >
+            <Download className="w-4 h-4" />
+          </a>
         </div>
       )
     }
     if (message.type === 'DOCUMENT') {
       const fileName = message.content.split('/').pop() || 'documento.pdf'
       return (
-        <a 
-          href={message.content} 
-          target="_blank" 
-          rel="noopener noreferrer" 
-          className="flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/20 text-emerald-400 hover:text-emerald-300 transition-colors mt-1 max-w-xs"
-        >
-          <FileText className="w-7 h-7 text-slate-400 shrink-0" />
-          <div className="flex flex-col text-left min-w-0">
-            <span className="text-xs font-bold text-slate-200 truncate">{fileName}</span>
-            <span className="text-[9px] text-slate-500">Clique para visualizar arquivo</span>
-          </div>
-        </a>
+        <div className="flex items-center gap-2 mt-1 max-w-xs group/media">
+          <a 
+            href={message.content} 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="flex-1 flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/20 text-emerald-400 hover:text-emerald-300 transition-colors min-w-0"
+          >
+            <FileText className="w-7 h-7 text-slate-400 shrink-0" />
+            <div className="flex flex-col text-left min-w-0">
+              <span className="text-xs font-bold text-slate-200 truncate">{fileName}</span>
+              <span className="text-[9px] text-slate-500">Clique para visualizar arquivo</span>
+            </div>
+          </a>
+          {/* Botão de Download Dedicado */}
+          <a
+            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            download
+            title="Baixar Documento"
+            className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all shadow-lg shrink-0"
+          >
+            <Download className="w-4 h-4" />
+          </a>
+        </div>
       )
     }
     return <p className="whitespace-pre-line">{message.content}</p>
@@ -575,6 +662,7 @@ export default function ChatPage() {
           ) : (
             filteredContacts.map((contact) => {
               const isSelected = activeContact?.id === contact.id
+              const isPending = contact.lastMessage && contact.lastMessage.direction === 'INBOUND'
               const firstLetter = contact.name.substring(0, 1).toUpperCase()
               const lastMsgTime = contact.lastMessage 
                 ? new Date(contact.lastMessage.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -587,7 +675,9 @@ export default function ChatPage() {
                   className={`flex items-center gap-3.5 p-4 cursor-pointer border-b border-slate-900/60 transition-all ${
                     isSelected 
                       ? 'bg-slate-900/80 border-l-4 border-l-emerald-500' 
-                      : 'hover:bg-slate-900/40'
+                      : isPending
+                        ? 'bg-emerald-950/15 border-l-4 border-l-amber-500/80 hover:bg-emerald-900/20'
+                        : 'hover:bg-slate-900/40'
                   }`}
                 >
                   <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600/30 to-teal-500/30 border border-emerald-500/20 flex items-center justify-center font-extrabold text-emerald-400 shrink-0">
@@ -596,12 +686,21 @@ export default function ChatPage() {
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1 mb-1">
-                      <h4 className="text-sm font-semibold text-slate-200 truncate">
+                      <h4 className={`text-sm truncate ${
+                        isPending && !isSelected 
+                          ? 'text-emerald-300 font-extrabold' 
+                          : 'font-semibold text-slate-200'
+                      }`}>
                         {contact.name}
                       </h4>
-                      <span className="text-[10px] text-slate-500 font-medium shrink-0">
-                        {lastMsgTime}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          {lastMsgTime}
+                        </span>
+                        {isPending && (
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" title="Aguardando resposta do operador" />
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-between gap-2">
@@ -700,24 +799,57 @@ export default function ChatPage() {
                   const date = new Date(message.timestamp)
                   const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 
-                  return (
+                   return (
                     <div
                       key={message.id}
-                      className={`flex flex-col max-w-[70%] relative group/msg ${
+                      id={`msg-${message.id}`}
+                      className={`flex flex-col max-w-[70%] relative group/msg mb-2 ${
                         isOutbound ? 'self-end items-end' : 'self-start items-start'
                       }`}
                     >
-                      {/* Botão de Encaminhar flutuante que aparece ao passar o mouse */}
-                      <button
-                        type="button"
-                        onClick={() => handleOpenForward(message)}
-                        title="Encaminhar mensagem"
-                        className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover/msg:opacity-100 transition-opacity p-2 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all shadow-lg shrink-0 z-10 ${
-                          isOutbound ? '-left-12' : '-right-12'
+                      {/* Controles Flutuantes da Mensagem (Hover) */}
+                      <div
+                        className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover/msg:opacity-100 transition-all duration-200 flex items-center gap-1.5 shrink-0 z-20 ${
+                          isOutbound ? '-left-36' : '-right-36'
                         }`}
                       >
-                        <CornerUpRight className="w-4 h-4" />
-                      </button>
+                        {/* Seletor rápido de Reação 👍 */}
+                        <button
+                          type="button"
+                          onClick={() => handleReactToMessage(message.id, message.reaction === '👍' ? null : '👍')}
+                          title="Dar Joinha 👍"
+                          className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-amber-400 hover:border-amber-500/20 active:scale-95 shadow-md transition-all"
+                        >
+                          👍
+                        </button>
+                        {/* Seletor rápido de Reação ❤️ */}
+                        <button
+                          type="button"
+                          onClick={() => handleReactToMessage(message.id, message.reaction === '❤️' ? null : '❤️')}
+                          title="Amar ❤️"
+                          className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-500 hover:border-rose-500/20 active:scale-95 shadow-md transition-all"
+                        >
+                          ❤️
+                        </button>
+                        {/* Botão de Responder */}
+                        <button
+                          type="button"
+                          onClick={() => setReplyingToMessage(message)}
+                          title="Responder"
+                          className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 shadow-md transition-all"
+                        >
+                          <CornerUpRight className="w-3.5 h-3.5 transform -scale-x-100" />
+                        </button>
+                        {/* Botão de Encaminhar */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenForward(message)}
+                          title="Encaminhar"
+                          className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 shadow-md transition-all"
+                        >
+                          <CornerUpRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
 
                       {/* Balão de Fala */}
                       <div
@@ -727,6 +859,28 @@ export default function ChatPage() {
                             : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-slate-900'
                         }`}
                       >
+                        {/* Citação da Mensagem Respondida (Reply Quote) */}
+                        {message.replyTo && (
+                          <div
+                            onClick={() => {
+                              const target = document.getElementById(`msg-${message.replyTo!.id}`)
+                              target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                            }}
+                            className={`p-2.5 mb-2 rounded-xl text-xs border-l-4 cursor-pointer truncate max-w-xs transition-all hover:bg-opacity-20 select-none ${
+                              isOutbound
+                                ? 'bg-black/20 border-emerald-300 text-emerald-100'
+                                : 'bg-slate-950/80 border-emerald-500 text-slate-400 hover:bg-slate-950'
+                            }`}
+                          >
+                            <div className="font-bold text-[10px] uppercase mb-0.5">
+                              {message.replyTo.direction === 'OUTBOUND' ? 'Você' : 'Cliente'}
+                            </div>
+                            <div className="truncate text-[11px]">
+                              {message.replyTo.type !== 'TEXT' ? `[Mídia: ${message.replyTo.type}]` : message.replyTo.content}
+                            </div>
+                          </div>
+                        )}
+
                         {renderMessageContent(message)}
                         
                         {/* Rodapé Interno do Balão (Hora + Status) */}
@@ -738,6 +892,19 @@ export default function ChatPage() {
                           <span>{timeStr}</span>
                           {isOutbound && renderMessageStatus(message.status)}
                         </div>
+
+                        {/* Pílula de Reação */}
+                        {message.reaction && (
+                          <div
+                            onClick={() => handleReactToMessage(message.id, null)}
+                            title="Remover reação"
+                            className={`absolute -bottom-2 px-2 py-0.5 rounded-full text-xs bg-slate-900 border border-slate-800 shadow-md flex items-center justify-center cursor-pointer select-none hover:scale-110 active:scale-95 transition-all duration-100 ${
+                              isOutbound ? 'right-4' : 'left-4'
+                            }`}
+                          >
+                            {message.reaction}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
@@ -759,6 +926,30 @@ export default function ChatPage() {
 
             {/* Input de Digitação de Mensagem e Controles */}
             <div className="relative">
+              {/* Painel de Visualização de Mensagem Respondida (acima do input) */}
+              {replyingToMessage && (
+                <div className="absolute bottom-full left-0 right-0 z-30 p-3 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-4 backdrop-blur-md bg-opacity-95 select-none animate-in slide-in-from-bottom-2 duration-100">
+                  <div className="flex items-center gap-3 border-l-4 border-emerald-500 pl-3 min-w-0">
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[10px] uppercase font-bold text-emerald-400">
+                        Respondendo a {replyingToMessage.direction === 'OUTBOUND' ? 'Você' : 'Cliente'}
+                      </span>
+                      <span className="text-xs text-slate-400 truncate">
+                        {replyingToMessage.type !== 'TEXT' ? `[Mídia: ${replyingToMessage.type}]` : replyingToMessage.content}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReplyingToMessage(null)}
+                    className="text-slate-500 hover:text-slate-300 transition-colors p-1.5 hover:bg-slate-800 rounded-lg shrink-0"
+                    title="Cancelar resposta"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
               {/* POPOVER SELETOR DE EMOJIS */}
               {showEmojiPicker && (
                 <div className="absolute bottom-20 left-4 z-40 bg-slate-900 border border-slate-800 p-4 rounded-3xl shadow-2xl flex flex-wrap gap-2 max-w-[280px] backdrop-blur-md bg-slate-900/90">
