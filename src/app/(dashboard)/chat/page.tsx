@@ -134,6 +134,7 @@ export default function ChatPage() {
   const audioChunksRef = useRef<Blob[]>([])
   const recordingIntervalRef = useRef<any>(null)
   const audioStreamRef = useRef<MediaStream | null>(null)
+  const [selectedTagFilter, setSelectedTagFilter] = useState('')
 
   const handleReactToMessage = async (messageId: string, emoji: string | null) => {
     // Atualização otimista local imediata
@@ -800,11 +801,18 @@ export default function ChatPage() {
     }
   }
 
+  // Extrai todas as tags únicas de todos os contatos para preencher o filtro horizontal
+  const allTags = Array.from(
+    new Set(contacts.flatMap(c => c.tags || []))
+  ).filter(Boolean)
+
   // Filtragem de contatos na barra lateral de conversas
-  const filteredContacts = contacts.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.phone.includes(searchTerm)
-  )
+  const filteredContacts = contacts.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          c.phone.includes(searchTerm)
+    const matchesTag = selectedTagFilter ? c.tags.includes(selectedTagFilter) : true
+    return matchesSearch && matchesTag
+  })
 
   // Renderiza checks de status da mensagem com tooltips detalhados (Read Receipts)
   const renderMessageStatus = (status: string) => {
@@ -932,6 +940,36 @@ export default function ChatPage() {
             />
           </div>
         </div>
+
+        {/* Filtro por Tags (Chips Horizontais) */}
+        {allTags.length > 0 && (
+          <div className="px-4 py-3 border-b border-slate-900/60 bg-slate-950/20 flex items-center gap-1.5 overflow-x-auto scrollbar-none select-none shrink-0">
+            <button
+              onClick={() => setSelectedTagFilter('')}
+              className={`text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all border shrink-0 ${
+                selectedTagFilter === ''
+                  ? 'bg-emerald-600 border-emerald-500 text-white shadow-md'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+              }`}
+            >
+              Todos
+            </button>
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => setSelectedTagFilter(tag)}
+                className={`text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all border shrink-0 flex items-center gap-1 ${
+                  selectedTagFilter === tag
+                    ? 'bg-emerald-600 border-emerald-500 text-white shadow-md'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                }`}
+              >
+                <Tag className="w-2.5 h-2.5" />
+                <span>{tag}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Lista de Contatos com Scroll */}
         <div className="flex-1 overflow-y-auto">
