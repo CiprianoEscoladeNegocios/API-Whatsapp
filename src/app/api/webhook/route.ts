@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { pusherServer } from '@/lib/pusher'
+import { findContactByPhone } from '@/lib/phone'
 
 // 1. VALIDAÇÃO DO WEBHOOK (GET)
 // A Meta exige verificação via hub.challenge. 
@@ -117,16 +118,30 @@ export async function POST(request: NextRequest) {
         try {
           console.log(`⏳ [Twilio Webhook] Gravando mensagens inbound de +${customerPhone} no banco de dados...`)
           
-          // Upsert do Contato no banco de dados para garantir que ele exista
-          const contact = await prisma.contact.upsert({
-            where: { phone: customerPhone },
-            update: { name: customerName },
-            create: {
-              phone: customerPhone,
-              name: customerName,
-              tags: ['Novo Cliente']
+          // Busca o contato considerando a variação do 9º dígito no Brasil
+          let contact = await findContactByPhone(customerPhone)
+
+          if (contact) {
+            // Evita apagar o nome rico e personalizado definido pelo usuário
+            const isGenericName = contact.name === 'Cliente WhatsApp' || contact.name === 'Sem Nome'
+            const newNameIsBetter = customerName && customerName !== 'Cliente WhatsApp'
+
+            if (isGenericName && newNameIsBetter) {
+              contact = await prisma.contact.update({
+                where: { id: contact.id },
+                data: { name: customerName }
+              })
             }
-          })
+          } else {
+            // Cria se não existir sob nenhuma variação
+            contact = await prisma.contact.create({
+              data: {
+                phone: customerPhone,
+                name: customerName,
+                tags: ['Novo Cliente']
+              }
+            })
+          }
 
           const createdMessages: any[] = []
 
@@ -314,15 +329,30 @@ export async function POST(request: NextRequest) {
         content = `[Mídia do tipo: ${messageType}]`
       }
 
-      const contact = await prisma.contact.upsert({
-        where: { phone: customerPhone },
-        update: { name: customerName },
-        create: {
-          phone: customerPhone,
-          name: customerName,
-          tags: ['Novo Cliente']
+      // Busca o contato considerando a variação do 9º dígito no Brasil
+      let contact = await findContactByPhone(customerPhone)
+
+      if (contact) {
+        // Evita apagar o nome rico e personalizado definido pelo usuário
+        const isGenericName = contact.name === 'Cliente WhatsApp' || contact.name === 'Sem Nome'
+        const newNameIsBetter = customerName && customerName !== 'Cliente WhatsApp'
+
+        if (isGenericName && newNameIsBetter) {
+          contact = await prisma.contact.update({
+            where: { id: contact.id },
+            data: { name: customerName }
+          })
         }
-      })
+      } else {
+        // Cria se não existir sob nenhuma variação
+        contact = await prisma.contact.create({
+          data: {
+            phone: customerPhone,
+            name: customerName,
+            tags: ['Novo Cliente']
+          }
+        })
+      }
 
       const newMessage = await prisma.message.create({
         data: {

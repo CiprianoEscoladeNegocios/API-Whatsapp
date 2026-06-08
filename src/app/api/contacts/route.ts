@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { findContactByPhone } from '@/lib/phone'
 
 // 1. LISTAGEM DE CONTATOS (GET)
 // Retorna a lista de contatos ordenados pela data da última mensagem (estilo WhatsApp Web)
@@ -79,16 +80,23 @@ export async function POST(request: NextRequest) {
 
         const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(',').map(t => t.trim()) : [])
 
-        // Cria ou atualiza para evitar duplicidade de número de telefone
-        const contact = await prisma.contact.upsert({
-          where: { phone: cleanPhone },
-          update: { name, tags: { set: parsedTags } },
-          create: {
-            name,
-            phone: cleanPhone,
-            tags: parsedTags
-          }
-        })
+        // Busca o contato considerando a variação do 9º dígito para evitar duplicidade
+        let contact = await findContactByPhone(cleanPhone)
+
+        if (contact) {
+          contact = await prisma.contact.update({
+            where: { id: contact.id },
+            data: { name, tags: { set: parsedTags } }
+          })
+        } else {
+          contact = await prisma.contact.create({
+            data: {
+              name,
+              phone: cleanPhone,
+              tags: parsedTags
+            }
+          })
+        }
         contactsCreated.push(contact)
       }
 
@@ -110,15 +118,23 @@ export async function POST(request: NextRequest) {
 
     const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(',').map(t => t.trim()) : [])
 
-    const newContact = await prisma.contact.upsert({
-      where: { phone: cleanPhone },
-      update: { name, tags: { set: parsedTags } },
-      create: {
-        name,
-        phone: cleanPhone,
-        tags: parsedTags
-      }
-    })
+    // Busca o contato considerando a variação do 9º dígito para evitar duplicidade
+    let newContact = await findContactByPhone(cleanPhone)
+
+    if (newContact) {
+      newContact = await prisma.contact.update({
+        where: { id: newContact.id },
+        data: { name, tags: { set: parsedTags } }
+      })
+    } else {
+      newContact = await prisma.contact.create({
+        data: {
+          name,
+          phone: cleanPhone,
+          tags: parsedTags
+        }
+      })
+    }
 
     return NextResponse.json(newContact)
   } catch (error: any) {
