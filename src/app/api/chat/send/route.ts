@@ -21,10 +21,29 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Faz o disparo via API do Twilio WhatsApp (ou simulação caso mock)
-    const responseTwilio = await TwilioWhatsAppService.sendTextMessage({
-      to: contact.phone,
-      text: content
-    })
+    let responseTwilio;
+    if (type && type !== 'TEXT') {
+      // Converte a URL de mídia relativa para uma URL absoluta pública para que o Twilio possa acessá-la
+      let absoluteMediaUrl = content
+      if (content.startsWith('/')) {
+        const host = request.headers.get('host') || 'localhost:3000'
+        const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https'
+        absoluteMediaUrl = `${protocol}://${host}${content}`
+      }
+      
+      console.log(`📤 Enviando mídia comercial do tipo ${type}. URL pública do arquivo: ${absoluteMediaUrl}`)
+      
+      responseTwilio = await TwilioWhatsAppService.sendMediaMessage({
+        to: contact.phone,
+        mediaUrl: absoluteMediaUrl,
+        body: undefined // Sem texto extra para enviar o arquivo limpo
+      })
+    } else {
+      responseTwilio = await TwilioWhatsAppService.sendTextMessage({
+        to: contact.phone,
+        text: content
+      })
+    }
 
     // Extrai o ID da mensagem retornado pelo Twilio (Message SID)
     const metaMessageId = responseTwilio.messages?.[0]?.id || `mock_${Date.now()}`

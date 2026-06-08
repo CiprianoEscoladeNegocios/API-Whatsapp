@@ -134,3 +134,13 @@ model Campaign {
   // Mensagens geradas por essa campanha
   messages      Message[]
 }
+
+// 6. ARMAZENAMENTO DE ANEXOS PARA O VERCEL ENVIRONMENT (Cipriano Conversas)
+model Attachment {
+  id          String   @id @default(uuid())
+  fileName    String
+  fileType    String
+  fileData    Bytes    // Dados binários do arquivo (tipo bytea no Postgres)
+  createdAt   DateTime @default(now())
+}
+

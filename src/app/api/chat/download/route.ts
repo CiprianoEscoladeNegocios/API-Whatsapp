@@ -49,10 +49,17 @@ export async function GET(request: NextRequest) {
       fileName = `${fileName}.${ext}`
     }
 
+    // Se solicitado para exibição/reprodução direta, retorna como inline.
+    // Caso contrário (como para downloads dedicados), mantém attachment.
+    const inline = searchParams.get('inline') === 'true'
+    const contentDisposition = inline 
+      ? `inline; filename="${fileName}"` 
+      : `attachment; filename="${fileName}"`
+
     return new NextResponse(blob, {
       headers: {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Content-Disposition': contentDisposition,
         'Cache-Control': 'no-cache'
       }
     })

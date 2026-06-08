@@ -9,6 +9,6 @@ export const config = {
      * - login (Página de login da Cipriano)
      * - _next/static, _next/image, favicon.ico (recursos estáticos)
      */
-    "/((?!api/auth|api/webhook|api/Webhook|api/test-db-connection|api/test-auth-env|login|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api/auth|api/webhook|api/Webhook|api/test-db-connection|api/test-auth-env|api/chat/media|api/chat/download|login|_next/static|_next/image|favicon.ico).*)",
   ],
 }

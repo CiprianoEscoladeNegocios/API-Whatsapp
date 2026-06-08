@@ -102,6 +102,72 @@ export class TwilioWhatsAppService {
   }
 
   /**
+   * Envia uma mensagem com mídia (Imagem, Vídeo, Áudio ou Documento) pelo Twilio WhatsApp
+   */
+  static async sendMediaMessage({ to, mediaUrl, body }: { to: string; mediaUrl: string; body?: string }) {
+    const { accountSid, authToken, whatsappFrom, isConfigured } = this.getCredentials()
+
+    const cleanPhone = to.replace(/\D/g, '')
+    const twilioTo = `whatsapp:+${cleanPhone}`
+
+    if (!isConfigured) {
+      console.warn('⚠️ CREDENCIAIS DO TWILIO NÃO CONFIGURADAS. Simulando envio de mensagem com mídia local (Mock Mode)...')
+      return {
+        mock: true,
+        messages: [
+          {
+            id: `SM${Math.random().toString(36).substring(2, 18).toUpperCase()}`
+          }
+        ]
+      }
+    }
+
+    try {
+      const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`
+      const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64')
+
+      const bodyParams = new URLSearchParams()
+      bodyParams.append('To', twilioTo)
+      bodyParams.append('From', whatsappFrom)
+      bodyParams.append('MediaUrl', mediaUrl)
+      if (body) {
+        bodyParams.append('Body', body)
+      }
+
+      console.log(`📤 Enviando mídia para o Twilio. To: ${twilioTo}, MediaUrl: ${mediaUrl}`)
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: bodyParams.toString()
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        console.error('❌ Erro retornado pela API do Twilio (Mídia):', data)
+        throw new Error(data.message || 'Falha ao enviar mensagem de mídia via Twilio API')
+      }
+
+      console.log('✅ Mensagem de mídia enviada com sucesso pelo Twilio:', data.sid)
+      return {
+        sid: data.sid,
+        messages: [
+          {
+            id: data.sid
+          }
+        ]
+      }
+    } catch (error) {
+      console.error('❌ Erro crítico no transporte de mídia para Twilio API:', error)
+      throw error
+    }
+  }
+
+  /**
    * Envia uma mensagem baseada em Template aprovado pelo Twilio/WhatsApp
    */
   static async sendTemplateMessage({ to, templateName, languageCode = 'pt_BR', components = [] }: SendTemplateMessageParams) {

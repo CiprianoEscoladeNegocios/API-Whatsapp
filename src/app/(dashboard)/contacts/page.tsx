@@ -51,6 +51,7 @@ export default function ContactsPage() {
   const [csvHeaders, setCsvHeaders] = useState<string[]>([])
   const [selectedNameHeader, setSelectedNameHeader] = useState('')
   const [selectedPhoneHeader, setSelectedPhoneHeader] = useState('')
+  const [selectedTagHeader, setSelectedTagHeader] = useState('')
   const [previewContacts, setPreviewContacts] = useState<any[]>([])
   const [isImporting, setIsImporting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
@@ -187,8 +188,13 @@ export default function ContactsPage() {
             /telefone|celular|phone|whatsapp|tel/i.test(h)
           ) || headers[1] || headers[0]
 
+          const tagMatch = headers.find(h => 
+            /tag|tags|grupo|segmento|categoria/i.test(h)
+          ) || ''
+
           setSelectedNameHeader(nameMatch)
           setSelectedPhoneHeader(phoneMatch)
+          setSelectedTagHeader(tagMatch)
         } else {
           setErrorMsg('O arquivo CSV parece estar vazio ou formatado incorretamente.')
         }
@@ -207,14 +213,23 @@ export default function ContactsPage() {
     }
 
     // Pega as primeiras 5 linhas para pré-visualização
-    const preview = csvData.slice(0, 5).map(row => ({
-      name: row[selectedNameHeader] || '',
-      phone: row[selectedPhoneHeader] || '',
-      tags: ['Importado CSV']
-    }))
+    const preview = csvData.slice(0, 5).map(row => {
+      let tags: string[] = []
+      if (selectedTagHeader && row[selectedTagHeader]) {
+        tags = String(row[selectedTagHeader]).split(',').map(t => t.trim()).filter(Boolean)
+      } else {
+        tags = ['Importado CSV']
+      }
+
+      return {
+        name: row[selectedNameHeader] || '',
+        phone: row[selectedPhoneHeader] || '',
+        tags
+      }
+    })
 
     setPreviewContacts(preview)
-  }, [csvData, selectedNameHeader, selectedPhoneHeader])
+  }, [csvData, selectedNameHeader, selectedPhoneHeader, selectedTagHeader])
 
   // SALVAR DISPARO EM LOTE DO CSV NO BANCO
   const handleImportCsv = async () => {
@@ -225,11 +240,20 @@ export default function ContactsPage() {
 
     try {
       // Mapeia todas as linhas do CSV com base nos cabeçalhos selecionados
-      const mappedContacts = csvData.map(row => ({
-        name: row[selectedNameHeader]?.trim() || 'Sem Nome',
-        phone: row[selectedPhoneHeader]?.replace(/\D/g, '') || '',
-        tags: ['Alunos', 'Importado CSV'] // Adiciona tags padrão de segmentação
-      })).filter(c => c.phone.length >= 10) // Ignora registros sem telefone válido
+      const mappedContacts = csvData.map(row => {
+        let tags: string[] = []
+        if (selectedTagHeader && row[selectedTagHeader]) {
+          tags = String(row[selectedTagHeader]).split(',').map(t => t.trim()).filter(Boolean)
+        } else {
+          tags = ['Importado CSV']
+        }
+
+        return {
+          name: row[selectedNameHeader]?.trim() || 'Sem Nome',
+          phone: row[selectedPhoneHeader]?.replace(/\D/g, '') || '',
+          tags
+        }
+      }).filter(c => c.phone.length >= 10) // Ignora registros sem telefone válido
 
       if (mappedContacts.length === 0) {
         throw new Error('Nenhum contato com número de telefone válido foi encontrado para importação.')
@@ -247,6 +271,7 @@ export default function ContactsPage() {
         setCsvHeaders([])
         setSelectedNameHeader('')
         setSelectedPhoneHeader('')
+        setSelectedTagHeader('')
         loadContacts()
       } else {
         let errorMessage = 'Erro ao importar contatos.'
@@ -512,7 +537,7 @@ export default function ContactsPage() {
             ) : (
               <div className="flex flex-col gap-6">
                 {/* CONFIGURAÇÃO DE MAPEAMENTO */}
-                <div className="grid grid-cols-2 gap-4 bg-slate-900/40 border border-slate-900 p-4 rounded-2xl">
+                <div className="grid grid-cols-3 gap-4 bg-slate-900/40 border border-slate-900 p-4 rounded-2xl">
                   {/* Coluna Nome */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Coluna do Nome</label>
@@ -540,6 +565,21 @@ export default function ContactsPage() {
                       ))}
                     </select>
                   </div>
+
+                  {/* Coluna Tags */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Coluna de Tags</label>
+                    <select
+                      className="w-full bg-slate-950 border border-slate-900 focus:border-emerald-600 text-sm px-3.5 py-2.5 rounded-xl text-slate-100 focus:outline-none transition-all"
+                      value={selectedTagHeader}
+                      onChange={(e) => setSelectedTagHeader(e.target.value)}
+                    >
+                      <option value="">[Padrão / Nenhuma]</option>
+                      {csvHeaders.map((header) => (
+                        <option key={header} value={header}>{header}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {/* PRÉVIA DE MAPEAÇÃO */}
@@ -560,7 +600,19 @@ export default function ContactsPage() {
                             <td className="p-3 font-semibold text-slate-200">{c.name || '[Vazio]'}</td>
                             <td className="p-3">+{c.phone || '[Vazio]'}</td>
                             <td className="p-3">
-                              <span className="bg-slate-900 border border-slate-800 text-[9px] font-bold text-slate-400 px-1.5 py-0.5 rounded-md">Alunos</span>
+                              <div className="flex flex-wrap gap-1">
+                                {c.tags.map((tag: string, tagIdx: number) => (
+                                  <span 
+                                    key={tagIdx}
+                                    className="bg-slate-900 border border-slate-800 text-[9px] font-bold text-slate-400 px-1.5 py-0.5 rounded-md"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                                {c.tags.length === 0 && (
+                                  <span className="text-[9px] text-slate-600">Sem tags</span>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -583,6 +635,7 @@ export default function ContactsPage() {
                     onClick={() => {
                       setCsvData([])
                       setCsvHeaders([])
+                      setSelectedTagHeader('')
                     }}
                     className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/5 px-4 py-2 rounded-xl transition-all"
                   >
@@ -596,6 +649,7 @@ export default function ContactsPage() {
                         setIsCsvModalOpen(false)
                         setCsvData([])
                         setCsvHeaders([])
+                        setSelectedTagHeader('')
                       }}
                       className="bg-slate-900 hover:bg-slate-800 text-slate-300 font-semibold px-5 py-3 rounded-xl transition-all"
                     >

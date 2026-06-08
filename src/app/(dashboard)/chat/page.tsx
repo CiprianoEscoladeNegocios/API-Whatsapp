@@ -20,7 +20,9 @@ import {
   Loader2,
   X,
   Sparkles,
-  Download
+  Download,
+  Mic,
+  Trash2
 } from 'lucide-react'
 import { usePusher } from '@/hooks/usePusher'
 
@@ -124,6 +126,14 @@ export default function ChatPage() {
 
   // Recursos premium de respostas e reações
   const [replyingToMessage, setReplyingToMessage] = useState<Message | null>(null)
+
+  // Estados para Gravação de Áudio de Voz (Cipriano Conversas)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingIntervalRef = useRef<any>(null)
+  const audioStreamRef = useRef<MediaStream | null>(null)
 
   const handleReactToMessage = async (messageId: string, emoji: string | null) => {
     // Atualização otimista local imediata
@@ -402,6 +412,18 @@ export default function ChatPage() {
     return () => clearInterval(interval)
   }, [])
 
+  // Limpeza de recursos de áudio ao desmontar
+  useEffect(() => {
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [])
+
   // 7. ENVIO DE MENSAGEM (OUTBOUND)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -509,6 +531,14 @@ export default function ChatPage() {
     const file = e.target.files?.[0]
     if (!file || !activeContact) return
 
+    // Limitação de 4.5MB devido à restrição do payload de requisições da Vercel
+    const MAX_SIZE = 4.5 * 1024 * 1024
+    if (file.size > MAX_SIZE) {
+      alert('O tamanho do arquivo excede o limite máximo permitido de 4.5MB. Por favor, selecione um arquivo menor para garantir o envio correto pelo WhatsApp corporativo.')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
     setIsUploading(true)
     const formData = new FormData()
     formData.append('file', file)
@@ -571,6 +601,151 @@ export default function ChatPage() {
       setIsUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
+  }
+
+  // 8.B FLUXO DE GRAVAÇÃO DE ÁUDIO (MICROFONE) - Cipriano Conversas
+  const startRecording = async () => {
+    try {
+      // Solicita permissão de acesso ao microfone
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      audioStreamRef.current = stream
+      audioChunksRef.current = []
+
+      // Inicializa o MediaRecorder (com fallback robusto)
+      const options = { mimeType: 'audio/webm' }
+      let recorder: MediaRecorder
+      try {
+        recorder = new MediaRecorder(stream, options)
+      } catch (e) {
+        recorder = new MediaRecorder(stream)
+      }
+
+      mediaRecorderRef.current = recorder
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onstop = async () => {
+        // O WhatsApp exige que o tipo de áudio seja audio/ogg (com codec opus) para mensagens de voz.
+        // Disfarçamos o stream de áudio (que é gravado em Opus) no container OGG.
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/ogg' })
+        
+        // Evita uploads de arquivos corrompidos ou cliques acidentais vazios
+        if (audioBlob.size < 1000) {
+          console.warn('Gravação de áudio descartada por ser excessivamente curta.')
+          return
+        }
+
+        setIsUploading(true)
+
+        try {
+          const audioFile = new File([audioBlob], `gravacao_audio_${Date.now()}.ogg`, {
+            type: 'audio/ogg'
+          })
+
+          const formData = new FormData()
+          formData.append('file', audioFile)
+
+          // 1. Faz upload para a nossa rota do banco
+          const res = await fetch('/api/chat/upload', {
+            method: 'POST',
+            body: formData
+          })
+
+          if (!res.ok) throw new Error('Falha no upload do áudio físico')
+          const uploadData = await res.json()
+
+          // 2. Envia a gravação como mensagem comercial de tipo AUDIO
+          const sendRes = await fetch('/api/chat/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contactId: activeContact?.id,
+              content: uploadData.url,
+              type: 'AUDIO'
+            })
+          })
+
+          if (!sendRes.ok) throw new Error('Falha ao enviar áudio no chat')
+          const realAudioMsg = await sendRes.json()
+
+          // Adiciona a mensagem localmente no chat ativo para exibição
+          setMessages((prev) => [...prev, realAudioMsg])
+
+          // Atualiza o estado lateral do contato para mostrar [Áudio] como última mensagem
+          setContacts((prev) =>
+            prev.map((c) =>
+              c.id === activeContact?.id
+                ? {
+                    ...c,
+                    lastMessage: {
+                      content: '🎤 [Áudio gravado]',
+                      timestamp: realAudioMsg.timestamp,
+                      direction: realAudioMsg.direction,
+                      type: 'AUDIO',
+                      status: realAudioMsg.status,
+                      reaction: null
+                    }
+                  }
+                : c
+            )
+          )
+        } catch (err: any) {
+          console.error('Erro ao enviar áudio gravado do microfone:', err)
+          alert('Erro ao enviar o áudio gravado. Verifique as configurações de rede ou tente novamente.')
+        } finally {
+          setIsUploading(false)
+        }
+      }
+
+      recorder.start(200) // Coleta bytes a cada 200ms
+      setIsRecording(true)
+      setRecordingDuration(0)
+
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1)
+      }, 1000)
+
+    } catch (err: any) {
+      console.error('Erro ao acessar o microfone do dispositivo:', err)
+      alert('Não foi possível acessar o microfone. Certifique-se de que a permissão foi concedida nas configurações do seu navegador.')
+    }
+  }
+
+  const stopRecording = (shouldSend: boolean) => {
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current)
+      recordingIntervalRef.current = null
+    }
+
+    const recorder = mediaRecorderRef.current
+    if (recorder && recorder.state !== 'inactive') {
+      if (!shouldSend) {
+        // Remove listener onstop para abortar o upload
+        recorder.onstop = () => {
+          console.log('Gravação de áudio cancelada e descartada.')
+        }
+      }
+      recorder.stop()
+    }
+
+    // Desliga fisicamente o microfone para preservar privacidade do operador
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((track) => track.stop())
+      audioStreamRef.current = null
+    }
+
+    setIsRecording(false)
+    setRecordingDuration(0)
+  }
+
+  const formatDuration = (sec: number) => {
+    const minutes = Math.floor(sec / 60)
+    const seconds = sec % 60
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
   }
 
   // 9. FUNÇÃO PARA ACRESCENTAR EMOJIS NO INPUT
@@ -645,7 +820,10 @@ export default function ChatPage() {
     // Função auxiliar para resolver a fonte física de mídias privadas via proxy local
     const getMediaSrc = (url: string) => {
       if (url.includes('api.twilio.com')) {
-        return `/api/chat/download?url=${encodeURIComponent(url)}`
+        return `/api/chat/download?url=${encodeURIComponent(url)}&inline=true`
+      }
+      if (url.startsWith('/api/chat/media')) {
+        return `${url}&inline=true`
       }
       return url
     }
@@ -693,7 +871,7 @@ export default function ChatPage() {
       const mediaSrc = getMediaSrc(message.content)
       return (
         <div className="py-1 mt-1 max-w-xs flex items-center gap-2 group/media">
-          <audio src={mediaSrc} controls className="w-full h-11 border border-slate-800 rounded-xl" />
+          <audio src={mediaSrc} controls className="flex-1 min-w-[200px] h-11 border border-slate-800 rounded-xl" />
           {/* Botão de Download Dedicado */}
           <a
             href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
@@ -1087,57 +1265,107 @@ export default function ChatPage() {
                   accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
                 />
 
-                <button 
-                  type="button"
-                  onClick={handleAttachClick}
-                  disabled={isUploading}
-                  className="text-slate-500 hover:text-slate-300 disabled:opacity-40 transition-colors p-2 hover:bg-slate-900/50 rounded-xl"
-                  title="Anexar arquivos de mídia"
-                >
-                  <Paperclip className="w-5 h-5" />
-                </button>
+                {!isRecording && (
+                  <>
+                    <button 
+                      type="button"
+                      onClick={handleAttachClick}
+                      disabled={isUploading}
+                      className="text-slate-500 hover:text-slate-300 disabled:opacity-40 transition-colors p-2 hover:bg-slate-900/50 rounded-xl"
+                      title="Anexar arquivos de mídia"
+                    >
+                      <Paperclip className="w-5 h-5" />
+                    </button>
 
-                <button 
-                  type="button"
-                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                  className={`transition-colors p-2 hover:bg-slate-900/50 rounded-xl ${
-                    showEmojiPicker ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
-                  }`}
-                  title="Selecionar emoji corporativo"
-                >
-                  <Smile className="w-5 h-5" />
-                </button>
+                    <button 
+                      type="button"
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      className={`transition-colors p-2 hover:bg-slate-900/50 rounded-xl ${
+                        showEmojiPicker ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                      title="Selecionar emoji corporativo"
+                    >
+                      <Smile className="w-5 h-5" />
+                    </button>
 
-                <button 
-                  type="button"
-                  onClick={() => {
-                    setShowTemplateModal(true)
-                    setSelectedTemplate(null)
-                    setTemplateVariables([])
-                  }}
-                  disabled={isSending || isUploading}
-                  className="text-slate-500 hover:text-emerald-400 transition-colors p-2 hover:bg-slate-900/50 rounded-xl flex items-center justify-center shrink-0"
-                  title="Disparar template aprovado pela Meta ⚡"
-                >
-                  <Sparkles className="w-5 h-5" />
-                </button>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setShowTemplateModal(true)
+                        setSelectedTemplate(null)
+                        setTemplateVariables([])
+                      }}
+                      disabled={isSending || isUploading}
+                      className="text-slate-500 hover:text-emerald-400 transition-colors p-2 hover:bg-slate-900/50 rounded-xl flex items-center justify-center shrink-0"
+                      title="Disparar template aprovado pela Meta ⚡"
+                    >
+                      <Sparkles className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
 
-                <input
-                  type="text"
-                  placeholder="Digite uma mensagem..."
-                  className="flex-1 bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-sm px-4 py-3 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
-                  value={newMessageText}
-                  onChange={(e) => setNewMessageText(e.target.value)}
-                  disabled={isSending || isUploading}
-                />
+                {isRecording ? (
+                  <div className="flex-1 flex items-center justify-between bg-emerald-950/10 border border-emerald-500/20 px-4 py-2.5 rounded-xl text-emerald-400">
+                    <div className="flex items-center gap-3 text-xs sm:text-sm font-bold">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping shrink-0" />
+                      <span>Gravando áudio corporativo...</span>
+                      <span className="font-mono bg-emerald-950/60 px-2.5 py-0.5 rounded border border-emerald-500/10 text-xs">
+                        {formatDuration(recordingDuration)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => stopRecording(false)}
+                        className="text-red-400 hover:text-red-300 p-2 hover:bg-red-950/20 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-bold"
+                        title="Descartar gravação de voz"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span className="hidden sm:inline">Descartar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => stopRecording(true)}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-colors shadow-lg hover:shadow-emerald-600/10 active:scale-95"
+                        title="Enviar gravação"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Enviar</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      placeholder="Digite uma mensagem..."
+                      className="flex-1 bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-sm px-4 py-3 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                      value={newMessageText}
+                      onChange={(e) => setNewMessageText(e.target.value)}
+                      disabled={isSending || isUploading}
+                    />
 
-                <button
-                  type="submit"
-                  disabled={!newMessageText.trim() || isSending || isUploading}
-                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 disabled:translate-y-0 text-white p-3 rounded-xl shadow-lg hover:shadow-emerald-600/10 hover:-translate-y-0.5 active:translate-y-0 transition-all shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
+                    {newMessageText.trim() ? (
+                      <button
+                        type="submit"
+                        disabled={!newMessageText.trim() || isSending || isUploading}
+                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 disabled:translate-y-0 text-white p-3 rounded-xl shadow-lg hover:shadow-emerald-600/10 hover:-translate-y-0.5 active:translate-y-0 transition-all shrink-0"
+                      >
+                        <Send className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startRecording}
+                        disabled={isSending || isUploading}
+                        className="bg-slate-900 border border-slate-800 hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 p-3 rounded-xl shadow hover:-translate-y-0.5 active:translate-y-0 transition-all shrink-0 flex items-center justify-center"
+                        title="Gravar mensagem de voz"
+                      >
+                        <Mic className="w-5 h-5" />
+                      </button>
+                    )}
+                  </>
+                )}
               </form>
             </div>
           </>
