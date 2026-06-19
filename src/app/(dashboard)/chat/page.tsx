@@ -178,7 +178,85 @@ export default function ChatPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const messageInputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null)
   const notifiedMessageIds = useRef<Set<string>>(new Set())
+
+  // Função modular para upload e envio de arquivo (imagens, prints e documentos)
+  const uploadAndSendFile = async (file: File) => {
+    if (!activeContact) return
+
+    // Limitação de 4.5MB devido à restrição do payload de requisições da Vercel
+    const MAX_SIZE = 4.5 * 1024 * 1024
+    if (file.size > MAX_SIZE) {
+      alert('O tamanho do arquivo excede o limite máximo permitido de 4.5MB. Por favor, selecione um arquivo menor para garantir o envio correto pelo WhatsApp corporativo.')
+      return
+    }
+
+    setIsUploading(true)
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      // 1. Faz upload para a nossa rota de upload físico
+      const res = await fetch('/api/chat/upload', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!res.ok) throw new Error('Falha no upload do arquivo físico')
+
+      const uploadData = await res.json()
+
+      // 2. Classifica a tipagem de mídia de acordo com o arquivo
+      let messageType = 'DOCUMENT'
+      if (file.type.startsWith('image/')) messageType = 'IMAGE'
+      else if (file.type.startsWith('video/')) messageType = 'VIDEO'
+      else if (file.type.startsWith('audio/')) messageType = 'AUDIO'
+
+      // 3. Dispara o envio do anexo como mensagem comercial de mídia
+      const sendRes = await fetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contactId: activeContact.id,
+          content: uploadData.url,
+          type: messageType
+        })
+      })
+
+      if (!sendRes.ok) throw new Error('Falha ao enviar o anexo para o chat')
+
+      const realMediaMsg = await sendRes.json()
+
+      // Adiciona na conversa local de mensagens
+      setMessages((prev) => [...prev, realMediaMsg])
+
+      // Sincroniza a barra lateral local com os dados finais reais
+      setContacts((prev) =>
+        prev.map((c) =>
+          c.id === activeContact.id
+            ? {
+                ...c,
+                lastMessage: {
+                  content: realMediaMsg.content,
+                  timestamp: realMediaMsg.timestamp,
+                  direction: realMediaMsg.direction,
+                  type: realMediaMsg.type,
+                  status: realMediaMsg.status,
+                  reaction: null
+                }
+              }
+            : c
+        )
+      )
+
+    } catch (err) {
+      console.error('Erro no fluxo de anexo de mídias:', err)
+      alert('Erro ao enviar o anexo. Certifique-se de que o arquivo atende às especificações.')
+    } finally {
+      setIsUploading(false)
+    }
+  }
 
   // Emojis mais comuns do WhatsApp corporativo
   const emojis = ['😀', '😂', '😍', '👍', '🙏', '🚀', '🔥', '👏', '🎉', '💡', '🏆', '💼', '📈', '💬', '📱', '✅', '❌', '⚠️']
@@ -425,6 +503,57 @@ export default function ChatPage() {
     }
   }, [])
 
+  // Captura do evento Paste (colar) global para imagens, prints e textos
+  useEffect(() => {
+    if (!activeContact) return
+
+    const handleGlobalPaste = async (e: ClipboardEvent) => {
+      // Ignorar se o usuário estiver digitando em outros campos de formulário que não sejam o de envio de mensagens
+      const activeElement = document.activeElement
+      if (
+        activeElement &&
+        activeElement !== messageInputRef.current &&
+        (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')
+      ) {
+        return
+      }
+
+      const items = e.clipboardData?.items
+      if (!items) return
+
+      let hasFile = false
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const file = item.getAsFile()
+          if (file) {
+            hasFile = true
+            e.preventDefault()
+            await uploadAndSendFile(file)
+            break
+          }
+        }
+      }
+
+      if (!hasFile) {
+        const pastedText = e.clipboardData?.getData('text')
+        if (pastedText && activeElement !== messageInputRef.current) {
+          e.preventDefault()
+          setNewMessageText((prev) => prev + pastedText)
+          // Foca o input de mensagem após um pequeno delay para garantir a renderização
+          setTimeout(() => {
+            messageInputRef.current?.focus()
+          }, 10)
+        }
+      }
+    }
+
+    window.addEventListener('paste', handleGlobalPaste)
+    return () => {
+      window.removeEventListener('paste', handleGlobalPaste)
+    }
+  }, [activeContact])
+
   // 7. ENVIO DE MENSAGEM (OUTBOUND)
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -531,77 +660,8 @@ export default function ChatPage() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file || !activeContact) return
-
-    // Limitação de 4.5MB devido à restrição do payload de requisições da Vercel
-    const MAX_SIZE = 4.5 * 1024 * 1024
-    if (file.size > MAX_SIZE) {
-      alert('O tamanho do arquivo excede o limite máximo permitido de 4.5MB. Por favor, selecione um arquivo menor para garantir o envio correto pelo WhatsApp corporativo.')
-      if (fileInputRef.current) fileInputRef.current.value = ''
-      return
-    }
-
-    setIsUploading(true)
-    const formData = new FormData()
-    formData.append('file', file)
-
-    try {
-      // 1. Faz upload para a nossa nova API local
-      const res = await fetch('/api/chat/upload', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (!res.ok) throw new Error('Falha no upload do arquivo físico')
-
-      const uploadData = await res.json()
-
-      // 2. Classifica a tipagem de mídia de acordo com o arquivo
-      let messageType = 'DOCUMENT'
-      if (file.type.startsWith('image/')) messageType = 'IMAGE'
-      else if (file.type.startsWith('video/')) messageType = 'VIDEO'
-      else if (file.type.startsWith('audio/')) messageType = 'AUDIO'
-
-      // 3. Dispara o envio do anexo como mensagem comercial de mídia
-      const sendRes = await fetch('/api/chat/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contactId: activeContact.id,
-          content: uploadData.url,
-          type: messageType
-        })
-      })
-
-      if (!sendRes.ok) throw new Error('Falha ao enviar o anexo para o chat')
-
-      const realMediaMsg = await sendRes.json()
-
-      // Atualiza a barra lateral local de contatos para remover a cor pendente na hora
-      setContacts((prev) =>
-        prev.map((c) =>
-          c.id === activeContact.id
-            ? {
-                ...c,
-                lastMessage: {
-                  content: realMediaMsg.content,
-                  timestamp: realMediaMsg.timestamp,
-                  direction: realMediaMsg.direction,
-                  type: realMediaMsg.type,
-                  status: realMediaMsg.status,
-                  reaction: null
-                }
-              }
-            : c
-        )
-      )
-
-    } catch (err) {
-      console.error('Erro no fluxo de anexo de mídias:', err)
-      alert('Erro ao enviar o anexo. Certifique-se de que o arquivo atende às especificações.')
-    } finally {
-      setIsUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-    }
+    await uploadAndSendFile(file)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   // 8.B FLUXO DE GRAVAÇÃO DE ÁUDIO (MICROFONE) - Cipriano Conversas
@@ -836,6 +896,14 @@ export default function ChatPage() {
       return url
     }
 
+    // Helper para obter a URL correta de download forçado (evitando proxy local para mídias do banco)
+    const getDownloadUrl = (url: string) => {
+      if (url.startsWith('/api/chat/media')) {
+        return `${url}${url.includes('?') ? '&' : '?'}download=true`
+      }
+      return `/api/chat/download?url=${encodeURIComponent(url)}`
+    }
+
     if (message.type === 'IMAGE') {
       const mediaSrc = getMediaSrc(message.content)
       return (
@@ -848,7 +916,7 @@ export default function ChatPage() {
           />
           {/* Botão de Download Dedicado */}
           <a
-            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            href={getDownloadUrl(message.content)}
             download
             title="Baixar Imagem"
             className="absolute top-2 right-2 p-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all opacity-0 group-hover/media:opacity-100 shadow-lg z-10"
@@ -865,7 +933,7 @@ export default function ChatPage() {
           <video src={mediaSrc} controls className="w-full max-h-64 rounded-xl" />
           {/* Botão de Download Dedicado */}
           <a
-            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            href={getDownloadUrl(message.content)}
             download
             title="Baixar Vídeo"
             className="absolute top-2 right-2 p-1.5 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all opacity-0 group-hover/media:opacity-100 shadow-lg z-10"
@@ -882,7 +950,7 @@ export default function ChatPage() {
           <audio src={mediaSrc} controls className="flex-1 min-w-[200px] h-11 border border-slate-800 rounded-xl" />
           {/* Botão de Download Dedicado */}
           <a
-            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            href={getDownloadUrl(message.content)}
             download
             title="Baixar Áudio"
             className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all shadow-lg shrink-0"
@@ -894,10 +962,11 @@ export default function ChatPage() {
     }
     if (message.type === 'DOCUMENT') {
       const fileName = message.content.split('/').pop() || 'documento.pdf'
+      const documentSrc = getMediaSrc(message.content)
       return (
         <div className="flex items-center gap-2 mt-1 max-w-xs group/media">
           <a 
-            href={message.content} 
+            href={documentSrc} 
             target="_blank" 
             rel="noopener noreferrer" 
             className="flex-1 flex items-center gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/20 text-emerald-400 hover:text-emerald-300 transition-colors min-w-0"
@@ -910,7 +979,7 @@ export default function ChatPage() {
           </a>
           {/* Botão de Download Dedicado */}
           <a
-            href={`/api/chat/download?url=${encodeURIComponent(message.content)}`}
+            href={getDownloadUrl(message.content)}
             download
             title="Baixar Documento"
             className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all shadow-lg shrink-0"
@@ -1374,13 +1443,20 @@ export default function ChatPage() {
                   </div>
                 ) : (
                   <>
-                    <input
-                      type="text"
+                    <textarea
+                      ref={messageInputRef as React.RefObject<HTMLTextAreaElement>}
                       placeholder="Digite uma mensagem..."
-                      className="flex-1 bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-sm px-4 py-3 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none transition-all"
+                      rows={1}
+                      className="flex-1 bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-sm px-4 py-3 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none transition-all resize-none h-[46px] min-h-[46px] max-h-32 overflow-y-auto scrollbar-none"
                       value={newMessageText}
                       onChange={(e) => setNewMessageText(e.target.value)}
                       disabled={isSending || isUploading}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage(e)
+                        }
+                      }}
                     />
 
                     {newMessageText.trim() ? (

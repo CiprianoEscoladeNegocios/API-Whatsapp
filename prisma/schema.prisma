@@ -58,24 +58,26 @@ enum CampaignStatus {
 
 // 1. OPERADOR HUMANO (Controle de Acesso)
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  password  String
-  role      Role     @default(OPERATOR)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String               @id @default(uuid())
+  name          String
+  email         String               @unique
+  password      String
+  role          Role                 @default(OPERATOR)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  virtualGroups VirtualGroupMember[]
 }
 
 // 2. GESTÃO DE CLIENTES/CONTATOS
 model Contact {
-  id        String    @id @default(uuid())
-  phone     String    @unique // Número em formato internacional (ex: 5511999999999)
-  name      String
-  tags      String[]  @default([]) // Tags para segmentação de campanhas (ex: ["lead", "VIP"])
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  messages  Message[]
+  id            String               @id @default(uuid())
+  phone         String               @unique // Número em formato internacional (ex: 5511999999999)
+  name          String
+  tags          String[]             @default([]) // Tags para segmentação de campanhas (ex: ["lead", "VIP"])
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  messages      Message[]
+  virtualGroups VirtualGroupMember[]
 }
 
 // 3. HISTÓRICO DE MENSAGENS (Atendimento e Auditoria)
@@ -142,5 +144,47 @@ model Attachment {
   fileType    String
   fileData    Bytes    // Dados binários do arquivo (tipo bytea no Postgres)
   createdAt   DateTime @default(now())
+}
+
+// 7. GRUPOS VIRTUAIS WEB (Cipriano Conversas)
+model VirtualGroup {
+  id                    String                @id @default(uuid())
+  name                  String
+  description           String?
+  inviteToken           String                @unique @default(uuid())
+  avatarUrl             String?               // Foto do grupo
+  onlyAdminsCanMessage  Boolean               @default(false)
+  welcomeMessage        String?               // Mensagem automática de boas-vindas enviada no WhatsApp do contato ao entrar
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  members               VirtualGroupMember[]
+  messages              VirtualGroupMessage[]
+}
+
+model VirtualGroupMember {
+  id        String       @id @default(uuid())
+  groupId   String
+  group     VirtualGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  contactId String?
+  contact   Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isAdmin   Boolean      @default(false)
+  createdAt DateTime     @default(now())
+
+  @@unique([groupId, contactId])
+  @@unique([groupId, userId])
+}
+
+model VirtualGroupMessage {
+  id         String       @id @default(uuid())
+  groupId    String
+  group      VirtualGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  senderId   String       // ID do User ou do Contact
+  senderName String       // Nome exibido de quem enviou
+  senderType String       // "OPERATOR" ou "CONTACT"
+  type       MessageType  @default(TEXT)
+  content    String       // O texto da mensagem ou a URL da mídia
+  timestamp  DateTime     @default(now())
 }
 

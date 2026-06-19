@@ -13,7 +13,8 @@ import {
   LogOut,
   Building2,
   Sparkles,
-  UserCheck
+  UserCheck,
+  Network
 } from 'lucide-react'
 
 interface SidebarItemProps {
@@ -61,6 +62,7 @@ export default function DashboardLayout({
     { href: '/contacts', icon: <Users className="w-5 h-5" />, label: 'Contatos' },
     { href: '/templates', icon: <FileText className="w-5 h-5" />, label: 'Templates' },
     { href: '/campaigns', icon: <Megaphone className="w-5 h-5" />, label: 'Campanhas' },
+    { href: '/groups', icon: <Network className="w-5 h-5" />, label: 'Grupos' },
   ]
 
   if (userRole === 'ADMIN') {
