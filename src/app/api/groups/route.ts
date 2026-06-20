@@ -11,6 +11,7 @@ export async function GET() {
   try {
     const groups = await prisma.virtualGroup.findMany({
       include: {
+        welcomeTemplate: true,
         members: {
           include: {
             contact: true,
@@ -36,7 +37,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { name, description, avatarUrl, onlyAdminsCanMessage, welcomeMessage, operatorId } = await request.json()
+    const { name, description, avatarUrl, onlyAdminsCanMessage, welcomeMessage, welcomeTemplateId, operatorId } = await request.json()
     if (!name) {
       return NextResponse.json({ error: 'O nome do grupo é obrigatório' }, { status: 400 })
     }
@@ -48,7 +49,8 @@ export async function POST(request: NextRequest) {
         description,
         avatarUrl: avatarUrl || null,
         onlyAdminsCanMessage: !!onlyAdminsCanMessage,
-        welcomeMessage: welcomeMessage || null
+        welcomeMessage: welcomeMessage || null,
+        welcomeTemplateId: welcomeTemplateId || null
       }
     })
 

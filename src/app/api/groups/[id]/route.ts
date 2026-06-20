@@ -12,6 +12,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     const group = await prisma.virtualGroup.findUnique({
       where: { id: params.id },
       include: {
+        welcomeTemplate: true,
         members: {
           include: {
             contact: true,
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { name, description, avatarUrl, onlyAdminsCanMessage, welcomeMessage } = await request.json()
+    const { name, description, avatarUrl, onlyAdminsCanMessage, welcomeMessage, welcomeTemplateId } = await request.json()
 
     if (!name) {
       return NextResponse.json({ error: 'O nome do grupo é obrigatório' }, { status: 400 })
@@ -54,7 +55,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
         description: description || null,
         avatarUrl: avatarUrl || null,
         onlyAdminsCanMessage: !!onlyAdminsCanMessage,
-        welcomeMessage: welcomeMessage || null
+        welcomeMessage: welcomeMessage || null,
+        welcomeTemplateId: welcomeTemplateId || null
       }
     })
 

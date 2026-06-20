@@ -17,12 +17,14 @@ export default function GroupsAdminPage() {
   const [groups, setGroups] = useState<any[]>([])
   const [selectedGroup, setSelectedGroup] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
+  const [templates, setTemplates] = useState<any[]>([])
 
   // Estados de Criação de Grupo
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [welcomeMessage, setWelcomeMessage] = useState('')
+  const [welcomeTemplateId, setWelcomeTemplateId] = useState('')
   const [onlyAdminsCanMessage, setOnlyAdminsCanMessage] = useState(false)
   const [creating, setCreating] = useState(false)
 
@@ -30,6 +32,7 @@ export default function GroupsAdminPage() {
   const [editName, setEditName] = useState('')
   const [editDesc, setEditDesc] = useState('')
   const [editWelcome, setEditWelcome] = useState('')
+  const [editWelcomeTemplateId, setEditWelcomeTemplateId] = useState('')
   const [editOnlyAdmins, setEditOnlyAdmins] = useState(false)
   const [saving, setSaving] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
@@ -38,7 +41,21 @@ export default function GroupsAdminPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 1. Carregar grupos virtuais
+  // 1. Carregar grupos virtuais e templates homologados
+  async function fetchTemplates() {
+    try {
+      const res = await fetch('/api/templates')
+      if (res.ok) {
+        const data = await res.json()
+        // Filtrar apenas templates aprovados comercialmente pela Meta
+        const approved = data.filter((t: any) => t.status === 'APPROVED')
+        setTemplates(approved)
+      }
+    } catch (err) {
+      console.error('Erro ao buscar templates:', err)
+    }
+  }
+
   async function fetchGroups() {
     try {
       const res = await fetch('/api/groups')
@@ -63,6 +80,7 @@ export default function GroupsAdminPage() {
 
   useEffect(() => {
     fetchGroups()
+    fetchTemplates()
   }, [])
 
   const selectGroup = (group: any) => {
@@ -70,6 +88,7 @@ export default function GroupsAdminPage() {
     setEditName(group.name)
     setEditDesc(group.description || '')
     setEditWelcome(group.welcomeMessage || '')
+    setEditWelcomeTemplateId(group.welcomeTemplateId || '')
     setEditOnlyAdmins(group.onlyAdminsCanMessage)
   }
 
@@ -87,6 +106,7 @@ export default function GroupsAdminPage() {
           name: name.trim(),
           description: description.trim(),
           welcomeMessage: welcomeMessage.trim(),
+          welcomeTemplateId: welcomeTemplateId || null,
           onlyAdminsCanMessage,
           operatorId
         })
@@ -97,6 +117,7 @@ export default function GroupsAdminPage() {
         setName('')
         setDescription('')
         setWelcomeMessage('')
+        setWelcomeTemplateId('')
         setOnlyAdminsCanMessage(false)
         setShowCreateModal(false)
         await fetchGroups()
@@ -126,6 +147,7 @@ export default function GroupsAdminPage() {
           name: editName.trim(),
           description: editDesc.trim(),
           welcomeMessage: editWelcome.trim(),
+          welcomeTemplateId: editWelcomeTemplateId || null,
           onlyAdminsCanMessage: editOnlyAdmins,
           avatarUrl: selectedGroup.avatarUrl
         })
@@ -440,20 +462,30 @@ export default function GroupsAdminPage() {
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                    <span>Mensagem de Boas-Vindas do WhatsApp</span>
+                    <span>Template de Boas-Vindas (WhatsApp)</span>
                     <span className="text-[8px] bg-slate-950 border border-slate-800 text-slate-500 px-1 py-0.5 rounded font-mono uppercase">
-                      Twilio API
+                      Meta Approved
                     </span>
                   </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Olá! Seja bem-vindo ao grupo de mentoria corporativa..."
-                    className="bg-slate-950 border border-slate-900 focus:border-emerald-600 text-xs px-3.5 py-2.5 rounded-xl text-slate-100 resize-none focus:outline-none transition-all"
-                    value={editWelcome}
-                    onChange={(e) => setEditWelcome(e.target.value)}
-                  />
+                  <select
+                    className="bg-slate-950 border border-slate-900 focus:border-emerald-600 text-xs px-3.5 py-2.5 rounded-xl text-slate-100 focus:outline-none transition-all"
+                    value={editWelcomeTemplateId}
+                    onChange={(e) => setEditWelcomeTemplateId(e.target.value)}
+                  >
+                    <option value="">Nenhum (Sem mensagem automática)</option>
+                    {templates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>
+                        {tpl.name} ({tpl.category})
+                      </option>
+                    ))}
+                  </select>
+                  {editWelcomeTemplateId && (
+                    <div className="mt-1 p-3.5 rounded-2xl bg-slate-950/60 border border-slate-900/80 text-[11px] text-slate-400 leading-relaxed font-mono whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {templates.find(t => t.id === editWelcomeTemplateId)?.body}
+                    </div>
+                  )}
                   <span className="text-[9px] text-slate-600 leading-tight">
-                    Disparada de forma automatizada no WhatsApp do contato assim que ele ingressar via link de convite.
+                    Template disparado automaticamente via Twilio/WhatsApp quando o contato entrar pelo link de convite.
                   </span>
                 </div>
 
@@ -617,20 +649,30 @@ export default function GroupsAdminPage() {
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <span>Mensagem de Boas-Vindas do WhatsApp</span>
+                  <span>Template de Boas-Vindas (WhatsApp)</span>
                   <span className="text-[8px] bg-slate-950 border border-slate-800 text-slate-500 px-1 py-0.5 rounded font-mono uppercase">
-                    Twilio
+                    Meta Approved
                   </span>
                 </label>
-                <textarea
-                  rows={2.5}
-                  placeholder="Olá! Seja muito bem-vindo ao grupo de mentoria..."
-                  className="bg-slate-950 border border-slate-800 focus:border-emerald-600 text-xs px-3.5 py-2.5 rounded-xl text-slate-100 resize-none placeholder-slate-600 focus:outline-none transition-all"
-                  value={welcomeMessage}
-                  onChange={(e) => setWelcomeMessage(e.target.value)}
-                />
+                <select
+                  className="bg-slate-950 border border-slate-800 focus:border-emerald-600 text-xs px-3.5 py-2.5 rounded-xl text-slate-100 focus:outline-none transition-all"
+                  value={welcomeTemplateId}
+                  onChange={(e) => setWelcomeTemplateId(e.target.value)}
+                >
+                  <option value="">Nenhum (Sem mensagem automática)</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name} ({tpl.category})
+                    </option>
+                  ))}
+                </select>
+                {welcomeTemplateId && (
+                  <div className="mt-1 p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 leading-relaxed font-mono whitespace-pre-wrap max-h-24 overflow-y-auto">
+                    {templates.find(t => t.id === welcomeTemplateId)?.body}
+                  </div>
+                )}
                 <span className="text-[9px] text-slate-600 leading-tight">
-                  Enviada no WhatsApp do contato de forma automatizada ao entrar.
+                  Enviado no WhatsApp do contato de forma automatizada ao entrar.
                 </span>
               </div>
 

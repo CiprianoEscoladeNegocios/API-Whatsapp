@@ -117,6 +117,7 @@ model Template {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   campaigns      Campaign[]
+  virtualGroups  VirtualGroup[] @relation("GroupWelcomeTemplate")
 }
 
 // 5. CAMPANHAS E DISPAROS EM MASSA
@@ -154,7 +155,9 @@ model VirtualGroup {
   inviteToken           String                @unique @default(uuid())
   avatarUrl             String?               // Foto do grupo
   onlyAdminsCanMessage  Boolean               @default(false)
-  welcomeMessage        String?               // Mensagem automática de boas-vindas enviada no WhatsApp do contato ao entrar
+  welcomeMessage        String?               // Mensagem automática de boas-vindas enviada no WhatsApp do contato ao entrar (Fallback)
+  welcomeTemplateId     String?
+  welcomeTemplate       Template?             @relation("GroupWelcomeTemplate", fields: [welcomeTemplateId], references: [id], onDelete: SetNull)
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   members               VirtualGroupMember[]

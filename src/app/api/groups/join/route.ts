@@ -90,7 +90,63 @@ export async function POST(request: NextRequest) {
       }
 
       // 6. Envia mensagem automática de boas-vindas do WhatsApp via Twilio
-      if (group.welcomeMessage) {
+      if (group.welcomeTemplateId) {
+        try {
+          const template = await prisma.template.findUnique({
+            where: { id: group.welcomeTemplateId }
+          })
+
+          if (template && template.status === 'APPROVED') {
+            // Mapeia variáveis do template
+            // A primeira variável {{1}} é o nome do contato, a segunda {{2}} é o nome do grupo, as demais ficam em branco
+            const variables = template.variables.map((v, idx) => 
+              idx === 0 ? contact.name : (idx === 1 ? group.name : '')
+            )
+
+            const components = [
+              {
+                type: 'body',
+                parameters: variables.map(v => ({
+                  type: 'text',
+                  text: String(v)
+                }))
+              }
+            ]
+
+            console.log(`📡 Disparando template de boas-vindas "${template.name}" para ${contact.name} (${cleanPhone})`)
+
+            const twilioRes = await TwilioWhatsAppService.sendTemplateMessage({
+              to: cleanPhone,
+              templateName: template.name,
+              languageCode: template.language,
+              components
+            })
+
+            const metaMessageId = twilioRes.messages?.[0]?.id || `welcome_tpl_${Date.now()}`
+
+            // Interpola a mensagem localmente para o histórico do banco de dados
+            let interpolatedContent = template.body
+            variables.forEach((val, idx) => {
+              interpolatedContent = interpolatedContent.replace(`{{${idx + 1}}}`, String(val))
+            })
+
+            // Registra no histórico de mensagens
+            await prisma.message.create({
+              data: {
+                contactId: contact.id,
+                direction: 'OUTBOUND',
+                type: 'TEMPLATE',
+                content: interpolatedContent,
+                status: twilioRes.mock ? 'DELIVERED' : 'SENT',
+                metaMessageId
+              }
+            })
+          }
+        } catch (twilioErr: any) {
+          console.error('❌ [Twilio Template Boas-vindas Error]: Falha ao disparar template de boas-vindas no WhatsApp:', twilioErr.message)
+        }
+      } else if (group.welcomeMessage) {
+        // Fallback para mensagem de texto livre configurada anteriormente
         try {
           const twilioRes = await TwilioWhatsAppService.sendTextMessage({
             to: cleanPhone,
@@ -111,7 +167,7 @@ export async function POST(request: NextRequest) {
             }
           })
         } catch (twilioErr: any) {
-          console.error('❌ [Twilio Boas-vindas Error]: Falha ao disparar mensagem de boas-vindas no WhatsApp:', twilioErr.message)
+          console.error('❌ [Twilio Boas-vindas Fallback Error]: Falha ao disparar mensagem de boas-vindas no WhatsApp:', twilioErr.message)
         }
       }
     }
