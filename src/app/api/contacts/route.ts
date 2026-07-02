@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
         const cleanPhone = phone.replace(/\D/g, '')
         if (cleanPhone.length < 10) continue // Ignora números inválidos
 
-        const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(',').map(t => t.trim()) : [])
+        const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(/[;,]/).map(t => t.trim()).filter(Boolean) : [])
 
         // Busca o contato considerando a variação do 9º dígito para evitar duplicidade
         let contact = await findContactByPhone(cleanPhone)
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Número de telefone inválido. Deve incluir DDI e DDD.' }, { status: 400 })
     }
 
-    const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(',').map(t => t.trim()) : [])
+    const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(/[;,]/).map(t => t.trim()).filter(Boolean) : [])
 
     // Busca o contato considerando a variação do 9º dígito para evitar duplicidade
     let newContact = await findContactByPhone(cleanPhone)
@@ -159,7 +159,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Número de telefone inválido. Deve incluir DDI e DDD.' }, { status: 400 })
     }
 
-    const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(',').map(t => t.trim()) : [])
+    const parsedTags = Array.isArray(tags) ? tags : (tags ? String(tags).split(/[;,]/).map(t => t.trim()).filter(Boolean) : [])
 
     // Verifica se o novo número já é usado por outro contato
     const existingWithPhone = await prisma.contact.findFirst({

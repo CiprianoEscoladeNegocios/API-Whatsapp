@@ -33,6 +33,29 @@ export async function POST(request: NextRequest) {
     const { contact, campaign } = message
     const { template } = campaign
 
+    // 1. Se a campanha estiver pausada, mantemos a mensagem como pendente no banco e retornamos 200 OK para liberar o QStash
+    if (campaign.status === 'PAUSED') {
+      console.log(`⏸️ Disparo via fila suspenso para o contato ${contact.phone} porque a campanha "${campaign.name}" está PAUSADA.`)
+      return NextResponse.json({ success: true, paused: true, message: 'Campanha pausada. Disparo suspenso temporariamente.' })
+    }
+
+    // 2. Se a campanha ou a mensagem foi cancelada, cancelamos o disparo e garantimos que o status no banco é FAILED
+    if (campaign.status === 'CANCELED' || message.metaMessageId?.startsWith('canceled_')) {
+      console.log(`🛑 Disparo via fila cancelado para o contato ${contact.phone} porque a campanha "${campaign.name}" está CANCELADA.`)
+      
+      if (!message.metaMessageId?.startsWith('canceled_') || message.status !== 'FAILED') {
+        await prisma.message.update({
+          where: { id: message.id },
+          data: {
+            metaMessageId: `canceled_${campaign.id}_${contact.id}_${Date.now()}`,
+            status: 'FAILED'
+          }
+        })
+        await checkAndCompleteCampaign(campaign.id)
+      }
+      return NextResponse.json({ success: true, canceled: true, message: 'Campanha cancelada. Disparo ignorado.' })
+    }
+
     try {
       const components = [
         {

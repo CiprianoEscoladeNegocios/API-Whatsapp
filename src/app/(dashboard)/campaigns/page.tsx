@@ -19,7 +19,7 @@ interface Campaign {
   id: string
   name: string
   templateName: string
-  status: 'DRAFT' | 'SCHEDULED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+  status: 'DRAFT' | 'SCHEDULED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'PAUSED' | 'CANCELED'
   createdAt: string
   targetTags: string[]
   stats: {
@@ -131,6 +131,26 @@ export default function CampaignsPage() {
     }
   }
 
+  const handleUpdateCampaignStatus = async (campaignId: string, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      })
+
+      if (res.ok) {
+        loadCampaigns()
+      } else {
+        const errData = await res.json()
+        alert(errData.error || 'Erro ao atualizar status da campanha.')
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Erro de conexão ao atualizar status.')
+    }
+  }
+
   // Helper para renderizar status e cores das campanhas
   const renderCampaignStatus = (status: string) => {
     if (status === 'COMPLETED') {
@@ -145,6 +165,20 @@ export default function CampaignsPage() {
         <span className="inline-flex items-center gap-1.5 text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded-xl font-bold">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>ENVIANDO MENSAGENS</span>
+        </span>
+      )
+    }
+    if (status === 'PAUSED') {
+      return (
+        <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2.5 py-1 rounded-xl font-bold">
+          PAUSADA
+        </span>
+      )
+    }
+    if (status === 'CANCELED') {
+      return (
+        <span className="text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2.5 py-1 rounded-xl font-bold">
+          CANCELADA
         </span>
       )
     }
@@ -228,7 +262,36 @@ export default function CampaignsPage() {
                       </span>
                     </div>
                   </div>
-                  <div>
+                  <div className="flex items-center gap-4">
+                    {/* Botões de Ação para Controle de Disparo */}
+                    {(camp.status === 'RUNNING' || camp.status === 'PAUSED' || camp.status === 'DRAFT') && (
+                      <div className="flex gap-2">
+                        {camp.status === 'RUNNING' && (
+                          <button
+                            onClick={() => handleUpdateCampaignStatus(camp.id, 'PAUSED')}
+                            className="bg-amber-600/10 hover:bg-amber-600/30 text-amber-400 border border-amber-500/20 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-all"
+                          >
+                            Pausar
+                          </button>
+                        )}
+                        {(camp.status === 'PAUSED' || camp.status === 'DRAFT') && (
+                          <button
+                            onClick={() => handleUpdateCampaignStatus(camp.id, 'RUNNING')}
+                            className="bg-emerald-600/10 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-all"
+                          >
+                            Iniciar
+                          </button>
+                        )}
+                        {(camp.status === 'RUNNING' || camp.status === 'PAUSED') && (
+                          <button
+                            onClick={() => handleUpdateCampaignStatus(camp.id, 'CANCELED')}
+                            className="bg-rose-600/10 hover:bg-rose-600/30 text-rose-400 border border-rose-500/20 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-all"
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {renderCampaignStatus(camp.status)}
                   </div>
                 </div>

@@ -52,6 +52,8 @@ enum CampaignStatus {
   DRAFT      // Em rascunho
   SCHEDULED  // Agendada para um horário futuro
   RUNNING    // Disparos sendo processados
+  PAUSED     // Disparos temporariamente parados
+  CANCELED   // Campanha cancelada permanentemente
   COMPLETED  // Todos os disparos concluídos
   FAILED     // Falha no motor de execução da campanha
 }
@@ -190,4 +192,13 @@ model VirtualGroupMessage {
   content    String       // O texto da mensagem ou a URL da mídia
   timestamp  DateTime     @default(now())
 }
+
+// 8. CONFIGURAÇÕES DO SISTEMA (Cipriano Conversas)
+model SystemSetting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 
