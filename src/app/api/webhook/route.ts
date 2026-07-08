@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { pusherServer } from '@/lib/pusher'
 import { findContactByPhone } from '@/lib/phone'
+import { checkAndSendOutOfHoursReply } from '@/lib/auto-reply'
 
 // 1. VALIDAÇÃO DO WEBHOOK (GET)
 // A Meta exige verificação via hub.challenge. 
@@ -40,212 +41,59 @@ export async function POST(request: NextRequest) {
     if (contentType.includes('application/x-www-form-urlencoded')) {
       const formData = await request.formData()
       
-      // Converte o FormData em objeto para fins de debug e logs
+      // Converte o FormData em um Record de strings para envio/validação
       const rawPayload: Record<string, string> = {}
       formData.forEach((value, key) => {
         rawPayload[key] = value.toString()
       })
-      console.log('📩 [Twilio Webhook] Payload recebido:', JSON.stringify(rawPayload, null, 2))
 
-      const messageSid = formData.get('MessageSid') as string
-      const smsStatus = (formData.get('SmsStatus') || formData.get('MessageStatus')) as string
-      const bodyText = formData.get('Body') as string
-      const rawFrom = formData.get('From') as string // Ex: whatsapp:+5511999999999
-      
-      if (!messageSid) {
-        return NextResponse.json({ error: 'Parâmetro MessageSid ausente' }, { status: 400 })
-      }
+      console.log('📩 [Twilio Webhook] Recebida chamada. MessageSid:', rawPayload['MessageSid'] || 'Desconhecido')
 
-      // A.1) PROCESSAMENTO DE ATUALIZAÇÃO DE STATUS (Callbacks do Twilio)
-      // Status possíveis no callback do Twilio: sent, delivered, read, failed, undelivered
-      if (smsStatus && smsStatus !== 'received' && !bodyText) {
-        let dbStatus: 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' = 'SENT'
+      // Opcional: Validação de Assinatura do Twilio
+      const shouldValidate = process.env.TWILIO_VALIDATE_SIGNATURE === 'true'
+      if (shouldValidate) {
+        const signature = request.headers.get('X-Twilio-Signature') || ''
+        const url = request.url
+        const authToken = process.env.TWILIO_AUTH_TOKEN || ''
         
-        if (smsStatus === 'delivered') dbStatus = 'DELIVERED'
-        if (smsStatus === 'read') dbStatus = 'READ'
-        if (smsStatus === 'failed' || smsStatus === 'undelivered') dbStatus = 'FAILED'
+        const { validateTwilioSignature } = await import('@/lib/twilio-webhook-processor')
+        const isValid = validateTwilioSignature(authToken, signature, url, rawPayload)
+        
+        if (!isValid) {
+          console.error('❌ [Twilio Webhook] Assinatura inválida detectada no webhook.')
+          return new NextResponse('Assinatura inválida', { status: 401 })
+        }
+      }
 
-        // Busca a mensagem no banco utilizando o messageSid
-        const existingMessage = await prisma.message.findUnique({
-          where: { metaMessageId: messageSid },
-          include: { contact: true }
+      // Envia para processamento em background (fila)
+      const qstashToken = process.env.QSTASH_TOKEN
+      const qstashUrl = process.env.QSTASH_URL
+      const currentDomain = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+
+      if (qstashToken && qstashUrl) {
+        // Enfileira usando o Upstash QStash
+        console.log(`📡 [Twilio Webhook] Enfileirando MessageSid ${rawPayload['MessageSid']} no Upstash QStash...`)
+        fetch(`${qstashUrl}/v1/publish/${currentDomain}/api/webhook/process-twilio`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${qstashToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(rawPayload)
+        }).catch(err => {
+          console.error('❌ [Twilio Webhook] Erro ao enfileirar no QStash:', err)
         })
-
-        if (existingMessage) {
-          const updatedMessage = await prisma.message.update({
-            where: { metaMessageId: messageSid },
-            data: { status: dbStatus }
+      } else {
+        // Fallback local: Executa em background de forma assíncrona (Promise sem await)
+        console.log(`⏳ [Twilio Webhook] Sem QStash. Processando MessageSid ${rawPayload['MessageSid']} assincronamente local...`)
+        import('@/lib/twilio-webhook-processor').then(({ processTwilioWebhookPayload }) => {
+          processTwilioWebhookPayload(rawPayload).catch(err => {
+            console.error('❌ [Twilio Webhook] Erro no processamento assíncrono local:', err)
           })
-
-          console.log(`🔄 [Twilio Webhook] Status da mensagem ${messageSid} atualizado para ${dbStatus}`)
-
-          // Notifica o frontend via Pusher em tempo real (blindado contra falhas)
-          try {
-            await pusherServer.trigger(
-              `chat-${existingMessage.contactId}`,
-              'message-status-updated',
-              {
-                messageId: updatedMessage.id,
-                metaMessageId: updatedMessage.metaMessageId,
-                status: updatedMessage.status,
-              }
-            )
-          } catch (err: any) {
-            console.warn('⚠️ [Pusher Warning] Falha ao enviar atualização de status via Pusher:', err.message)
-          }
-        } else {
-          console.warn(`⚠️ [Twilio Webhook] Mensagem com MessageSid ${messageSid} não encontrada no banco.`)
-        }
-
-        // Retorna TwiML XML de sucesso vazio para o Twilio (evita o erro 12300 de Content-Type!)
-        return new NextResponse('<Response></Response>', {
-          headers: { 'Content-Type': 'text/xml' },
-          status: 200
         })
       }
 
-      // A.2) PROCESSAMENTO DE MENSAGENS RECEBIDAS (Mensagens de entrada dos clientes)
-      // Processa se houver corpo de texto OU se houver arquivos de mídia anexados
-      const numMedia = parseInt(formData.get('NumMedia') as string || '0', 10)
-      const hasMedia = numMedia > 0
-
-      if ((bodyText || hasMedia) && rawFrom) {
-        // Limpa o número do cliente (remove "whatsapp:" e remove caracteres não numéricos)
-        // Desta forma, mantemos o padrão limpo do banco (ex: 5511999999999)
-        const customerPhone = rawFrom.replace('whatsapp:', '').replace(/\D/g, '')
-        const customerName = (formData.get('ProfileName') as string) || 'Cliente WhatsApp'
-
-        try {
-          console.log(`⏳ [Twilio Webhook] Gravando mensagens inbound de +${customerPhone} no banco de dados...`)
-          
-          // Busca o contato considerando a variação do 9º dígito no Brasil
-          let contact = await findContactByPhone(customerPhone)
-
-          if (contact) {
-            // Evita apagar o nome rico e personalizado definido pelo usuário
-            const isGenericName = contact.name === 'Cliente WhatsApp' || contact.name === 'Sem Nome'
-            const newNameIsBetter = customerName && customerName !== 'Cliente WhatsApp'
-
-            if (isGenericName && newNameIsBetter) {
-              contact = await prisma.contact.update({
-                where: { id: contact.id },
-                data: { name: customerName }
-              })
-            }
-          } else {
-            // Cria se não existir sob nenhuma variação
-            contact = await prisma.contact.create({
-              data: {
-                phone: customerPhone,
-                name: customerName,
-                tags: ['Novo Cliente']
-              }
-            })
-          }
-
-          const createdMessages: any[] = []
-
-          // 1. Se houver texto (legenda ou mensagem livre), salva a mensagem de texto
-          if (bodyText) {
-            const textMessage = await prisma.message.create({
-              data: {
-                metaMessageId: messageSid,
-                contactId: contact.id,
-                direction: 'INBOUND',
-                type: 'TEXT',
-                content: bodyText,
-                status: 'READ' // Entra direto como lida
-              }
-            })
-            createdMessages.push(textMessage)
-            console.log(`📩 [Twilio Webhook] Nova mensagem inbound de texto salva com sucesso! Contato: ${contact.name}, Conteúdo: ${bodyText}`)
-          }
-
-          // 2. Se houver arquivos de mídia, salva cada um deles individualmente
-          if (hasMedia) {
-            for (let i = 0; i < numMedia; i++) {
-              const mediaUrl = formData.get(`MediaUrl${i}`) as string
-              const mediaContentType = formData.get(`MediaContentType${i}`) as string || ''
-
-              if (mediaUrl) {
-                // Classifica o tipo de mídia
-                let mediaType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT' = 'DOCUMENT'
-                if (mediaContentType.startsWith('image/')) {
-                  mediaType = 'IMAGE'
-                } else if (mediaContentType.startsWith('video/')) {
-                  mediaType = 'VIDEO'
-                } else if (mediaContentType.startsWith('audio/') || mediaContentType.startsWith('voice/')) {
-                  mediaType = 'AUDIO'
-                }
-
-                // Define um metaMessageId único para evitar colisão se já salvamos a de texto ou outras mídias
-                const uniqueMetaMessageId = createdMessages.length === 0 
-                  ? messageSid 
-                  : `${messageSid}_media_${i}`
-
-                const mediaMessage = await prisma.message.create({
-                  data: {
-                    metaMessageId: uniqueMetaMessageId,
-                    contactId: contact.id,
-                    direction: 'INBOUND',
-                    type: mediaType,
-                    content: mediaUrl,
-                    status: 'READ'
-                  }
-                })
-                createdMessages.push(mediaMessage)
-                console.log(`📩 [Twilio Webhook] Novo anexo inbound do tipo ${mediaType} salvo com sucesso! Contato: ${contact.name}, URL: ${mediaUrl}`)
-              }
-            }
-          }
-
-          console.log(`📩 [Twilio Webhook] Gravou ${createdMessages.length} mensagens inbound para ${contact.name}!`)
-
-          // 3. Notifica via Pusher (blindado contra falhas) para cada mensagem criada
-          try {
-            for (const msg of createdMessages) {
-              // Notifica o chat individual via Pusher
-              await pusherServer.trigger(`chat-${contact.id}`, 'new-message', {
-                id: msg.id,
-                metaMessageId: msg.metaMessageId,
-                direction: msg.direction,
-                type: msg.type,
-                content: msg.content,
-                status: msg.status,
-                timestamp: msg.timestamp,
-                contactId: msg.contactId
-              })
-            }
-
-            // Atualiza a lista lateral com a última mensagem (seja de texto ou de mídia)
-            if (createdMessages.length > 0) {
-              const lastMsg = createdMessages[createdMessages.length - 1]
-              await pusherServer.trigger('chats-sidebar', 'sidebar-update', {
-                contactId: contact.id,
-                lastMessage: {
-                  content: lastMsg.type !== 'TEXT' ? `[${lastMsg.type}]` : lastMsg.content,
-                  timestamp: lastMsg.timestamp,
-                  direction: lastMsg.direction
-                },
-                contactName: contact.name,
-                contactPhone: contact.phone
-              })
-            }
-          } catch (pusherErr: any) {
-            console.warn('⚠️ [Pusher Warning] Falha ao enviar mensagens inbound via Pusher (Twilio):', pusherErr.message)
-          }
-        } catch (error: any) {
-          console.error('❌ [Twilio Webhook Error] Erro crítico ao gravar dados no banco:', error.message)
-        }
-
-        // Retorna TwiML XML de sucesso vazio para o Twilio (evita o erro 12300 de Content-Type!)
-        return new NextResponse('<Response></Response>', {
-          headers: { 'Content-Type': 'text/xml' },
-          status: 200
-        })
-      }
-
-      // Retorna TwiML XML de sucesso vazio para o Twilio (evita o erro 12300 de Content-Type!)
+      // Retorna TwiML XML de sucesso vazio de forma IMEDIATA (evita o erro 11200 e o 12300 do Twilio!)
       return new NextResponse('<Response></Response>', {
         headers: { 'Content-Type': 'text/xml' },
         status: 200
@@ -390,6 +238,13 @@ export async function POST(request: NextRequest) {
         })
       } catch (pusherErr: any) {
         console.warn('⚠️ [Pusher Warning] Falha ao enviar mensagens inbound via Pusher (Meta):', pusherErr.message)
+      }
+
+      // Verifica e envia resposta automática de fora de expediente se aplicável
+      try {
+        await checkAndSendOutOfHoursReply(contact.id, contact.phone, 'meta')
+      } catch (autoReplyErr: any) {
+        console.error('❌ [Webhook Auto Reply] Erro ao processar auto-resposta Meta:', autoReplyErr.message)
       }
 
       return NextResponse.json({ success: true, provider: 'meta', event: 'message-received' })

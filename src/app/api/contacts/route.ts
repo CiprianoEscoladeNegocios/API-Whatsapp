@@ -8,17 +8,32 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const withMessages = searchParams.get('withMessages') === 'true'
+    const tagsParam = searchParams.get('tags')
+
+    let whereClause = {}
+    if (tagsParam) {
+      const tagsList = tagsParam.split(',').map(t => t.trim()).filter(Boolean)
+      if (tagsList.length > 0) {
+        whereClause = {
+          tags: {
+            hasSome: tagsList
+          }
+        }
+      }
+    }
 
     if (!withMessages) {
       // Listagem simples (tabela de contatos)
       const contacts = await prisma.contact.findMany({
-        orderBy: { createdAt: 'desc' }
+        where: whereClause,
+        orderBy: { name: 'asc' }
       })
       return NextResponse.json(contacts)
     }
 
     // Listagem com a última mensagem agregada para a barra lateral do chat
     const contacts = await prisma.contact.findMany({
+      where: whereClause,
       include: {
         messages: {
           orderBy: { timestamp: 'desc' },

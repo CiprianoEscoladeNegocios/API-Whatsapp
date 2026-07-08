@@ -14,7 +14,8 @@ import {
   Building2,
   Sparkles,
   UserCheck,
-  Network
+  Network,
+  Settings
 } from 'lucide-react'
 
 interface SidebarItemProps {
@@ -67,6 +68,7 @@ export default function DashboardLayout({
 
   if (userRole === 'ADMIN') {
     menuItems.push({ href: '/users', icon: <UserCheck className="w-5 h-5" />, label: 'Operadores' })
+    menuItems.push({ href: '/settings', icon: <Settings className="w-5 h-5" />, label: 'Configurações' })
   }
 
   return (

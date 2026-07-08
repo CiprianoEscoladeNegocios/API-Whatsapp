@@ -47,10 +47,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// 2. DISPARAR UMA NOVA CAMPANHA (POST) - Refatorado com o dispatcher assíncrono
 export async function POST(request: NextRequest) {
   try {
-    const { name, templateId, targetTags } = await request.json()
+    const { name, templateId, targetTags, selectedContactIds } = await request.json()
 
     if (!name || !templateId || !targetTags || !Array.isArray(targetTags)) {
       return NextResponse.json({ error: 'Parâmetros obrigatórios ausentes ou inválidos.' }, { status: 400 })
@@ -68,16 +67,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'O template selecionado ainda não foi APROVADO pela Meta.' }, { status: 400 })
     }
 
-    const contacts = await prisma.contact.findMany({
-      where: {
-        tags: {
-          hasSome: targetTags
+    // Busca apenas os contatos selecionados ou, se não informado, todos das tags selecionadas
+    let contacts = []
+    if (Array.isArray(selectedContactIds)) {
+      contacts = await prisma.contact.findMany({
+        where: {
+          id: {
+            in: selectedContactIds
+          }
         }
-      }
-    })
+      })
+    } else {
+      contacts = await prisma.contact.findMany({
+        where: {
+          tags: {
+            hasSome: targetTags
+          }
+        }
+      })
+    }
 
     if (contacts.length === 0) {
-      return NextResponse.json({ error: 'Nenhum contato encontrado com as tags especificadas.' }, { status: 400 })
+      return NextResponse.json({ error: 'Nenhum contato selecionado ou encontrado para o disparo.' }, { status: 400 })
     }
 
     const campaign = await prisma.campaign.create({

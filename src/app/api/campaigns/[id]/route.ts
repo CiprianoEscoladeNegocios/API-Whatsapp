@@ -2,6 +2,77 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { dispatchCampaign } from '@/lib/campaign-dispatcher'
 
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const campaignId = params.id
+
+    if (!campaignId) {
+      return NextResponse.json({ error: 'ID da campanha é obrigatório.' }, { status: 400 })
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { id: campaignId },
+      include: {
+        template: true,
+        messages: {
+          include: {
+            contact: true
+          },
+          orderBy: {
+            contact: {
+              name: 'asc'
+            }
+          }
+        }
+      }
+    })
+
+    if (!campaign) {
+      return NextResponse.json({ error: 'Campanha não encontrada.' }, { status: 404 })
+    }
+
+    const messages = campaign.messages || []
+    const total = messages.length
+    const sent = messages.filter(m => m.status === 'SENT').length
+    const delivered = messages.filter(m => m.status === 'DELIVERED').length
+    const read = messages.filter(m => m.status === 'READ').length
+    const failed = messages.filter(m => m.status === 'FAILED').length
+
+    return NextResponse.json({
+      id: campaign.id,
+      name: campaign.name,
+      templateName: campaign.template.name,
+      status: campaign.status,
+      createdAt: campaign.createdAt,
+      targetTags: campaign.targetTags,
+      stats: {
+        total,
+        sent,
+        delivered,
+        read,
+        failed
+      },
+      messages: messages.map(msg => ({
+        id: msg.id,
+        status: msg.status,
+        timestamp: msg.timestamp,
+        content: msg.content,
+        contact: {
+          id: msg.contact?.id || '',
+          name: msg.contact?.name || 'Contato Excluído',
+          phone: msg.contact?.phone || ''
+        }
+      }))
+    })
+  } catch (error: any) {
+    console.error('❌ Erro no GET de /api/campaigns/[id]:', error)
+    return NextResponse.json({ error: 'Erro interno do servidor', details: error.message }, { status: 500 })
+  }
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
