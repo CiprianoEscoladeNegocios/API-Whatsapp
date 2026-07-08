@@ -12,7 +12,8 @@ import {
   Users,
   CheckCheck,
   Send,
-  Loader2
+  Loader2,
+  Download
 } from 'lucide-react'
 
 interface Campaign {
@@ -134,6 +135,52 @@ export default function CampaignsPage() {
     } finally {
       if (!silence) setIsLoadingDetail(false)
     }
+  }
+
+  // Filtra as mensagens da campanha ativa pelo texto digitado e pelo status
+  const filteredMessages = detailCampaign
+    ? (detailCampaign.messages || []).filter((m: any) => {
+        const query = searchContactQuery.toLowerCase()
+        const textMatch = 
+          m.contact.name.toLowerCase().includes(query) ||
+          m.contact.phone.includes(query)
+        
+        const statusMatch = statusFilter === 'ALL' || m.status === statusFilter
+        
+        return textMatch && statusMatch
+      })
+    : []
+
+  // Exporta a listagem filtrada de contatos da campanha para um arquivo CSV
+  const handleExportCSV = () => {
+    if (!detailCampaign || filteredMessages.length === 0) return
+
+    // Cabeçalhos
+    const headers = ['Nome', 'Telefone', 'Status']
+    
+    // Mapeia as linhas formatando as aspas duplas
+    const rows = filteredMessages.map((msg: any) => [
+      `"${msg.contact.name.replace(/"/g, '""')}"`,
+      `"${msg.contact.phone}"`,
+      `"${msg.status}"`
+    ])
+
+    // Une os dados por ponto e vírgula, ideal para a versão do Excel em Português
+    const csvContent = [headers.join(';'), ...rows.map((e: string[]) => e.join(';'))].join('\n')
+
+    // Gera o download via Blob com codificação UTF-8 BOM
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    
+    const fileName = `status_campanha_${detailCampaign.name.toLowerCase().replace(/\s+/g, '_')}_${statusFilter.toLowerCase()}.csv`
+    
+    link.setAttribute('href', url)
+    link.setAttribute('download', fileName)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   // Efeito para buscar contatos que possuem as tags selecionadas
@@ -701,18 +748,6 @@ export default function CampaignsPage() {
               const sentPercent = Math.round((detailCampaign.stats.sent / total) * 100)
               const readPercent = Math.round((detailCampaign.stats.read / total) * 100)
               const deliveredPercent = Math.round((detailCampaign.stats.delivered / total) * 100)
-              
-              // Filtra as mensagens pelo texto digitado na busca e pelo status
-              const filteredMessages = (detailCampaign.messages || []).filter((m: any) => {
-                const query = searchContactQuery.toLowerCase()
-                const textMatch = 
-                  m.contact.name.toLowerCase().includes(query) ||
-                  m.contact.phone.includes(query)
-                
-                const statusMatch = statusFilter === 'ALL' || m.status === statusFilter
-                
-                return textMatch && statusMatch
-              })
 
               return (
                 <>
@@ -842,13 +877,25 @@ export default function CampaignsPage() {
 
                     <div className="flex items-center justify-between gap-4 mb-3">
                       <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Envios por Contato</span>
-                      <input
-                        type="text"
-                        placeholder="Buscar contato..."
-                        className="bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-xs px-3 py-1.5 rounded-lg text-slate-100 focus:outline-none transition-all w-48"
-                        value={searchContactQuery}
-                        onChange={(e) => setSearchContactQuery(e.target.value)}
-                      />
+                      <div className="flex items-center gap-2">
+                        {filteredMessages.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleExportCSV}
+                            className="flex items-center gap-1.5 bg-emerald-600/10 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/20 text-xs font-bold px-3 py-1.5 rounded-lg transition-all"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Exportar CSV</span>
+                          </button>
+                        )}
+                        <input
+                          type="text"
+                          placeholder="Buscar contato..."
+                          className="bg-slate-900/60 border border-slate-900 focus:border-emerald-600 text-xs px-3 py-1.5 rounded-lg text-slate-100 focus:outline-none transition-all w-48"
+                          value={searchContactQuery}
+                          onChange={(e) => setSearchContactQuery(e.target.value)}
+                        />
+                      </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto border border-slate-900 rounded-2xl bg-slate-950/40 divide-y divide-slate-900/60">
