@@ -62,6 +62,7 @@ export default function CampaignsPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [searchContactQuery, setSearchContactQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED'>('ALL')
 
   const loadCampaigns = async () => {
     try {
@@ -674,6 +675,7 @@ export default function CampaignsPage() {
                 setIsDetailModalOpen(false)
                 setDetailCampaign(null)
                 setSearchContactQuery('')
+                setStatusFilter('ALL')
               }}
               className="absolute right-4 top-4 text-slate-500 hover:text-slate-300 transition-colors p-1.5 hover:bg-slate-900 rounded-lg"
             >
@@ -700,13 +702,16 @@ export default function CampaignsPage() {
               const readPercent = Math.round((detailCampaign.stats.read / total) * 100)
               const deliveredPercent = Math.round((detailCampaign.stats.delivered / total) * 100)
               
-              // Filtra as mensagens pelo texto digitado na busca
+              // Filtra as mensagens pelo texto digitado na busca e pelo status
               const filteredMessages = (detailCampaign.messages || []).filter((m: any) => {
                 const query = searchContactQuery.toLowerCase()
-                return (
+                const textMatch = 
                   m.contact.name.toLowerCase().includes(query) ||
                   m.contact.phone.includes(query)
-                )
+                
+                const statusMatch = statusFilter === 'ALL' || m.status === statusFilter
+                
+                return textMatch && statusMatch
               })
 
               return (
@@ -765,6 +770,76 @@ export default function CampaignsPage() {
 
                   {/* Busca e Lista de Contatos */}
                   <div className="flex-1 flex flex-col min-h-0">
+                    {/* Abas de Filtros de Status */}
+                    {(() => {
+                      const allMessages = detailCampaign.messages || []
+                      const countAll = allMessages.length
+                      const countSent = allMessages.filter((m: any) => m.status === 'SENT').length
+                      const countDelivered = allMessages.filter((m: any) => m.status === 'DELIVERED').length
+                      const countRead = allMessages.filter((m: any) => m.status === 'READ').length
+                      const countFailed = allMessages.filter((m: any) => m.status === 'FAILED').length
+
+                      return (
+                        <div className="flex flex-wrap gap-2 mb-4 p-1 bg-slate-900/60 rounded-xl border border-slate-900">
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilter('ALL')}
+                            className={`flex-1 text-center py-1.5 px-3 rounded-lg text-[10px] font-semibold transition-all ${
+                              statusFilter === 'ALL'
+                                ? 'bg-slate-800 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            Todas ({countAll})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilter('SENT')}
+                            className={`flex-1 text-center py-1.5 px-3 rounded-lg text-[10px] font-semibold transition-all ${
+                              statusFilter === 'SENT'
+                                ? 'bg-slate-800 text-slate-300 shadow-sm border border-slate-700'
+                                : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                          >
+                            Enviadas ({countSent})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilter('DELIVERED')}
+                            className={`flex-1 text-center py-1.5 px-3 rounded-lg text-[10px] font-semibold transition-all ${
+                              statusFilter === 'DELIVERED'
+                                ? 'bg-blue-500/10 text-blue-400 shadow-sm border border-blue-500/20'
+                                : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                          >
+                            Entregues ({countDelivered})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilter('READ')}
+                            className={`flex-1 text-center py-1.5 px-3 rounded-lg text-[10px] font-semibold transition-all ${
+                              statusFilter === 'READ'
+                                ? 'bg-emerald-500/10 text-emerald-400 shadow-sm border border-emerald-500/20'
+                                : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                          >
+                            Lidas ({countRead})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStatusFilter('FAILED')}
+                            className={`flex-1 text-center py-1.5 px-3 rounded-lg text-[10px] font-semibold transition-all ${
+                              statusFilter === 'FAILED'
+                                ? 'bg-rose-500/10 text-rose-400 shadow-sm border border-rose-500/20'
+                                : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                          >
+                            Falhas ({countFailed})
+                          </button>
+                        </div>
+                      )
+                    })()}
+
                     <div className="flex items-center justify-between gap-4 mb-3">
                       <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Envios por Contato</span>
                       <input
@@ -826,6 +901,7 @@ export default function CampaignsPage() {
                         setIsDetailModalOpen(false)
                         setDetailCampaign(null)
                         setSearchContactQuery('')
+                        setStatusFilter('ALL')
                       }}
                       className="bg-slate-900 hover:bg-slate-800 text-slate-300 font-semibold px-5 py-2.5 rounded-xl text-xs transition-all"
                     >
