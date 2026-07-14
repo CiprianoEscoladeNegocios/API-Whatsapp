@@ -36,7 +36,7 @@ export async function GET(
 
     const messages = campaign.messages || []
     const total = messages.length
-    const sent = messages.filter(m => m.status === 'SENT').length
+    const sent = messages.filter(m => m.status === 'SENT' && !m.metaMessageId?.startsWith('pending_')).length
     const delivered = messages.filter(m => m.status === 'DELIVERED').length
     const read = messages.filter(m => m.status === 'READ').length
     const failed = messages.filter(m => m.status === 'FAILED').length
@@ -143,10 +143,17 @@ export async function PATCH(
 
       console.log(`▶️ Campanha "${campaign.name}" (ID: ${campaignId}) foi RETOMADA (RUNNING).`)
 
-      // Dispara o dispatcher em background para processar as mensagens pendentes
-      dispatchCampaign(campaignId).catch(err => {
-        console.error(`❌ Erro no dispatchCampaign ao retomar campanha ${campaignId}:`, err)
-      })
+      // Dispara o dispatcher para processar as mensagens pendentes
+      // Se o QStash não estiver configurado, damos await para garantir a execução síncrona na Vercel
+      const qstashConfigured = !!(process.env.QSTASH_TOKEN && process.env.QSTASH_URL)
+      if (!qstashConfigured) {
+        console.log('⚡ QStash não configurado. Aguardando execução síncrona ao retomar campanha para evitar congelamento na Vercel.')
+        await dispatchCampaign(campaignId)
+      } else {
+        dispatchCampaign(campaignId).catch(err => {
+          console.error(`❌ Erro no dispatchCampaign ao retomar campanha ${campaignId}:`, err)
+        })
+      }
     }
 
     return NextResponse.json({ success: true, message: `Status da campanha atualizado para ${status}` })

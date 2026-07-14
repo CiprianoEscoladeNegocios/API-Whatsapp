@@ -75,105 +75,110 @@ export async function dispatchCampaign(campaignId: string) {
       startLocalBatchProcess(campaign.id, contacts, template, pendingMessages)
     }
   } else {
-    console.log('⚠️ dispatchCampaign: QStash não configurado. Executando processamento local sequencial com delay de 1s (IIFE)...')
-    startLocalBatchProcess(campaign.id, contacts, template, pendingMessages)
+    console.log('⚠️ dispatchCampaign: QStash não configurado. Executando processamento local acelerado em chunks concorrentes...')
+    await startLocalBatchProcess(campaign.id, contacts, template, pendingMessages)
   }
 }
 
 /**
- * Processamento local sequencial com controle de vazão estrito (rate limit de 1 msg/s)
- * e tratamento de retries local
+ * Processamento local em chunks concorrentes para evitar timeouts em ambientes serverless (Vercel)
  */
-function startLocalBatchProcess(campaignId: string, contacts: any[], template: any, messages: any[]) {
-  ;(async () => {
-    let successCount = 0
-    let failCount = 0
+export async function startLocalBatchProcess(campaignId: string, contacts: any[], template: any, messages: any[]) {
+  let successCount = 0
+  let failCount = 0
 
-    const messageMap = new Map(messages.map(m => [m.contactId, m]))
+  const messageMap = new Map(messages.map(m => [m.contactId, m]))
 
-    for (const contact of contacts) {
-      // Verifica o status da campanha antes de processar cada contato
-      const currentCampaign = await prisma.campaign.findUnique({
-        where: { id: campaignId },
-        select: { status: true }
-      })
+  // Divide em lotes de 10 contatos concorrentes para evitar timeouts na Vercel
+  const chunkSize = 10
+  for (let i = 0; i < contacts.length; i += chunkSize) {
+    const chunk = contacts.slice(i, i + chunkSize)
 
-      if (!currentCampaign || currentCampaign.status === 'PAUSED' || currentCampaign.status === 'CANCELED') {
-        console.log(`⏸️/🛑 Processamento local interrompido para a campanha ${campaignId}. Status atual: ${currentCampaign?.status}`)
-        return
-      }
+    await Promise.all(
+      chunk.map(async (contact) => {
+        // Verifica o status da campanha antes de processar cada contato
+        const currentCampaign = await prisma.campaign.findUnique({
+          where: { id: campaignId },
+          select: { status: true }
+        })
 
-      const dbMsg = messageMap.get(contact.id)
-      if (!dbMsg) continue
+        if (!currentCampaign || currentCampaign.status === 'PAUSED' || currentCampaign.status === 'CANCELED') {
+          console.log(`⏸️/🛑 Processamento local interrompido para a campanha ${campaignId} no contato ${contact.name}.`)
+          return
+        }
 
-      try {
-        const components = [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: contact.name },
-              { type: 'text', text: 'ciprianoescola.com.br' }
-            ]
-          }
-        ]
+        const dbMsg = messageMap.get(contact.id)
+        if (!dbMsg) return
 
-        // Executa o disparo com suporte a retry com backoff exponencial se houver falhas temporárias
-        const { retryWithBackoff } = await import('./twilio-webhook-processor')
-        const resTwilio = await retryWithBackoff(async () => {
-          return await TwilioWhatsAppService.sendTemplateMessage({
-            to: contact.phone,
-            templateName: template.name,
-            languageCode: template.language,
-            components
+        try {
+          const components = [
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: contact.name },
+                { type: 'text', text: 'ciprianoescola.com.br' }
+              ]
+            }
+          ]
+
+          // Executa o disparo com suporte a retry com backoff exponencial se houver falhas temporárias
+          const { retryWithBackoff } = await import('./twilio-webhook-processor')
+          const resTwilio = await retryWithBackoff(async () => {
+            return await TwilioWhatsAppService.sendTemplateMessage({
+              to: contact.phone,
+              templateName: template.name,
+              languageCode: template.language,
+              components
+            })
+          }, 3, 1000)
+
+          const metaMessageId = resTwilio.messages?.[0]?.id || `tpl_msg_${Math.random().toString(36).substring(2, 12)}`
+          const isMock = !!resTwilio.mock
+
+          await prisma.message.update({
+            where: { id: dbMsg.id },
+            data: {
+              metaMessageId,
+              status: isMock ? 'DELIVERED' : 'SENT'
+            }
           })
-        }, 3, 1000)
 
-        const metaMessageId = resTwilio.messages?.[0]?.id || `tpl_msg_${Math.random().toString(36).substring(2, 12)}`
-        const isMock = !!resTwilio.mock
+          successCount++
+        } catch (err) {
+          console.error(`❌ Falha definitiva no disparo individual para ${contact.name} (${contact.phone}) após retries:`, err)
+          
+          await prisma.message.update({
+            where: { id: dbMsg.id },
+            data: { status: 'FAILED' }
+          })
 
-        await prisma.message.update({
-          where: { id: dbMsg.id },
-          data: {
-            metaMessageId,
-            status: isMock ? 'DELIVERED' : 'SENT'
-          }
-        })
+          failCount++
+        }
+      })
+    )
 
-        successCount++
-      } catch (err) {
-        console.error(`❌ Falha definitiva no disparo individual para ${contact.name} (${contact.phone}) após retries:`, err)
-        
-        await prisma.message.update({
-          where: { id: dbMsg.id },
-          data: { status: 'FAILED' }
-        })
+    // Pequeno delay de 100ms para evitar sobrecarga do pool de conexões
+    await delay(100)
+  }
 
-        failCount++
-      }
+  // Só atualiza para concluído/falho se a campanha ainda estiver executando (RUNNING)
+  const checkCamp = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { status: true }
+  })
 
-      // Delay estrito de 1.0s para respeitar a taxa limite (rate limiting de 1 msg/s)
-      await delay(1000)
-    }
+  if (checkCamp && checkCamp.status === 'RUNNING') {
+    const allMsgs = await prisma.message.findMany({
+      where: { campaignId }
+    })
+    const successTotal = allMsgs.filter(m => m.status === 'SENT' || m.status === 'DELIVERED' || m.status === 'READ').length
+    const finalStatus = successTotal > 0 ? 'COMPLETED' : 'FAILED'
 
-    // Só atualiza para concluído/falho se a campanha ainda estiver executando (RUNNING)
-    const checkCamp = await prisma.campaign.findUnique({
+    await prisma.campaign.update({
       where: { id: campaignId },
-      select: { status: true }
+      data: { status: finalStatus }
     })
 
-    if (checkCamp && checkCamp.status === 'RUNNING') {
-      const allMsgs = await prisma.message.findMany({
-        where: { campaignId }
-      })
-      const successTotal = allMsgs.filter(m => m.status === 'SENT' || m.status === 'DELIVERED' || m.status === 'READ').length
-      const finalStatus = successTotal > 0 ? 'COMPLETED' : 'FAILED'
-
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { status: finalStatus }
-      })
-
-      console.log(`🏁 Campanha ${campaignId} concluída via processador local! Status Final: ${finalStatus}`)
-    }
-  })()
+    console.log(`🏁 Campanha ${campaignId} concluída via processador local! Status Final: ${finalStatus}`)
+  }
 }

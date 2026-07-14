@@ -130,10 +130,8 @@ export default function ChatPage() {
   // Estados para Gravação de Áudio de Voz (Cipriano Conversas)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
+  const micRecorderRef = useRef<any>(null)
   const recordingIntervalRef = useRef<any>(null)
-  const audioStreamRef = useRef<MediaStream | null>(null)
   const [selectedTagFilter, setSelectedTagFilter] = useState('')
 
   const handleReactToMessage = async (messageId: string, emoji: string | null) => {
@@ -497,8 +495,10 @@ export default function ChatPage() {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current)
       }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach((track) => track.stop())
+      if (micRecorderRef.current) {
+        try {
+          micRecorderRef.current.stop()
+        } catch (_) {}
       }
     }
   }, [])
@@ -667,102 +667,12 @@ export default function ChatPage() {
   // 8.B FLUXO DE GRAVAÇÃO DE ÁUDIO (MICROFONE) - Cipriano Conversas
   const startRecording = async () => {
     try {
-      // Solicita permissão de acesso ao microfone
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      audioStreamRef.current = stream
-      audioChunksRef.current = []
-
-      // Inicializa o MediaRecorder (com fallback robusto)
-      const options = { mimeType: 'audio/webm' }
-      let recorder: MediaRecorder
-      try {
-        recorder = new MediaRecorder(stream, options)
-      } catch (e) {
-        recorder = new MediaRecorder(stream)
+      if (!micRecorderRef.current) {
+        const MicRecorder = require('mic-recorder-to-mp3')
+        micRecorderRef.current = new MicRecorder({ bitRate: 128 })
       }
 
-      mediaRecorderRef.current = recorder
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      recorder.onstop = async () => {
-        // O WhatsApp exige que o tipo de áudio seja audio/ogg (com codec opus) para mensagens de voz.
-        // Disfarçamos o stream de áudio (que é gravado em Opus) no container OGG.
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/ogg' })
-        
-        // Evita uploads de arquivos corrompidos ou cliques acidentais vazios
-        if (audioBlob.size < 1000) {
-          console.warn('Gravação de áudio descartada por ser excessivamente curta.')
-          return
-        }
-
-        setIsUploading(true)
-
-        try {
-          const audioFile = new File([audioBlob], `gravacao_audio_${Date.now()}.ogg`, {
-            type: 'audio/ogg'
-          })
-
-          const formData = new FormData()
-          formData.append('file', audioFile)
-
-          // 1. Faz upload para a nossa rota do banco
-          const res = await fetch('/api/chat/upload', {
-            method: 'POST',
-            body: formData
-          })
-
-          if (!res.ok) throw new Error('Falha no upload do áudio físico')
-          const uploadData = await res.json()
-
-          // 2. Envia a gravação como mensagem comercial de tipo AUDIO
-          const sendRes = await fetch('/api/chat/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contactId: activeContact?.id,
-              content: uploadData.url,
-              type: 'AUDIO'
-            })
-          })
-
-          if (!sendRes.ok) throw new Error('Falha ao enviar áudio no chat')
-          const realAudioMsg = await sendRes.json()
-
-          // Adiciona a mensagem localmente no chat ativo para exibição
-          setMessages((prev) => [...prev, realAudioMsg])
-
-          // Atualiza o estado lateral do contato para mostrar [Áudio] como última mensagem
-          setContacts((prev) =>
-            prev.map((c) =>
-              c.id === activeContact?.id
-                ? {
-                    ...c,
-                    lastMessage: {
-                      content: '🎤 [Áudio gravado]',
-                      timestamp: realAudioMsg.timestamp,
-                      direction: realAudioMsg.direction,
-                      type: 'AUDIO',
-                      status: realAudioMsg.status,
-                      reaction: null
-                    }
-                  }
-                : c
-            )
-          )
-        } catch (err: any) {
-          console.error('Erro ao enviar áudio gravado do microfone:', err)
-          alert('Erro ao enviar o áudio gravado. Verifique as configurações de rede ou tente novamente.')
-        } finally {
-          setIsUploading(false)
-        }
-      }
-
-      recorder.start(200) // Coleta bytes a cada 200ms
+      await micRecorderRef.current.start()
       setIsRecording(true)
       setRecordingDuration(0)
 
@@ -782,21 +692,86 @@ export default function ChatPage() {
       recordingIntervalRef.current = null
     }
 
-    const recorder = mediaRecorderRef.current
-    if (recorder && recorder.state !== 'inactive') {
-      if (!shouldSend) {
-        // Remove listener onstop para abortar o upload
-        recorder.onstop = () => {
-          console.log('Gravação de áudio cancelada e descartada.')
-        }
-      }
-      recorder.stop()
-    }
+    const recorder = micRecorderRef.current
+    if (recorder) {
+      if (shouldSend) {
+        setIsUploading(true)
+        recorder.stop().getMp3().then(async ([buffer, blob]: [any[], Blob]) => {
+          // Evita uploads de arquivos corrompidos ou cliques acidentais vazios
+          if (blob.size < 1000) {
+            console.warn('Gravação de áudio descartada por ser excessivamente curta.')
+            setIsUploading(false)
+            return
+          }
 
-    // Desliga fisicamente o microfone para preservar privacidade do operador
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop())
-      audioStreamRef.current = null
+          try {
+            const audioFile = new File(buffer, `gravacao_audio_${Date.now()}.mp3`, {
+              type: 'audio/mpeg'
+            })
+
+            const formData = new FormData()
+            formData.append('file', audioFile)
+
+            // 1. Faz upload para a nossa rota do banco
+            const res = await fetch('/api/chat/upload', {
+              method: 'POST',
+              body: formData
+            })
+
+            if (!res.ok) throw new Error('Falha no upload do áudio físico')
+            const uploadData = await res.json()
+
+            // 2. Envia a gravação como mensagem comercial de tipo AUDIO
+            const sendRes = await fetch('/api/chat/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contactId: activeContact?.id,
+                content: uploadData.url,
+                type: 'AUDIO'
+              })
+            })
+
+            if (!sendRes.ok) throw new Error('Falha ao enviar áudio no chat')
+            const realAudioMsg = await sendRes.json()
+
+            // Adiciona a mensagem localmente no chat ativo para exibição
+            setMessages((prev) => [...prev, realAudioMsg])
+
+            // Atualiza o estado lateral do contato para mostrar [Áudio] como última mensagem
+            setContacts((prev) =>
+              prev.map((c) =>
+                c.id === activeContact?.id
+                  ? {
+                      ...c,
+                      lastMessage: {
+                        content: '🎤 [Áudio gravado]',
+                        timestamp: realAudioMsg.timestamp,
+                        direction: realAudioMsg.direction,
+                        type: 'AUDIO',
+                        status: realAudioMsg.status,
+                        reaction: null
+                      }
+                    }
+                  : c
+              )
+            )
+          } catch (err: any) {
+            console.error('Erro ao enviar áudio gravado do microfone:', err)
+            alert('Erro ao enviar o áudio gravado. Verifique as configurações de rede ou tente novamente.')
+          } finally {
+            setIsUploading(false)
+          }
+        }).catch((err: any) => {
+          console.error('Erro ao codificar áudio para MP3:', err)
+          setIsUploading(false)
+        })
+      } else {
+        try {
+          recorder.stop()
+        } catch (_) {}
+        console.log('Gravação de áudio cancelada e descartada.')
+      }
     }
 
     setIsRecording(false)
@@ -993,9 +968,9 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-slate-950 select-none">
+    <div className="flex-1 flex overflow-hidden bg-slate-950">
       {/* BARRA LATERAL: LISTA DE CONVERSAS */}
-      <div className="w-96 border-r border-slate-900 flex flex-col bg-slate-950/40 select-none">
+      <div className="w-96 border-r border-slate-900 flex flex-col bg-slate-950/40">
         {/* Cabeçalho de Busca */}
         <div className="p-4 border-b border-slate-900 bg-slate-950/60">
           <div className="relative">
@@ -1132,7 +1107,7 @@ export default function ChatPage() {
       </div>
 
       {/* JANELA DE CONVERSA DO CHAT */}
-      <div className="flex-1 flex flex-col bg-slate-950 select-none">
+      <div className="flex-1 flex flex-col bg-slate-950">
         {activeContact ? (
           <>
             {/* Cabeçalho do Chat */}
@@ -1247,7 +1222,7 @@ export default function ChatPage() {
 
                       {/* Balão de Fala */}
                       <div
-                        className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-lg relative ${
+                        className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-lg relative select-text ${
                           isOutbound
                             ? 'bg-emerald-600 text-white rounded-tr-none'
                             : 'bg-slate-900/90 text-slate-200 rounded-tl-none border border-slate-900'

@@ -198,7 +198,7 @@ export default function GroupChatPage() {
   const isRestricted = group.onlyAdminsCanMessage && !isUserAdmin
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col text-slate-100 relative overflow-hidden select-none">
+    <div className="min-h-screen bg-slate-950 flex flex-col text-slate-100 relative overflow-hidden">
       <div className="absolute top-0 right-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-[100px] pointer-events-none" />
       <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-teal-500/5 rounded-full blur-[100px] pointer-events-none" />
 
@@ -292,7 +292,7 @@ export default function GroupChatPage() {
 
                 {/* Balão de Fala */}
                 <div
-                  className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-lg relative ${
+                  className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-lg relative select-text ${
                     isOwn
                       ? 'bg-emerald-600 text-white rounded-tr-none'
                       : 'bg-slate-900 text-slate-200 rounded-tl-none border border-slate-900'

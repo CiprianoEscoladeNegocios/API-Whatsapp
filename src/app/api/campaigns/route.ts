@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     const formattedCampaigns = campaigns.map(camp => {
       const messages = camp.messages || []
       const total = messages.length
-      const sent = messages.filter(m => m.status === 'SENT').length
+      const sent = messages.filter(m => m.status === 'SENT' && !m.metaMessageId?.startsWith('pending_')).length
       const delivered = messages.filter(m => m.status === 'DELIVERED').length
       const read = messages.filter(m => m.status === 'READ').length
       const failed = messages.filter(m => m.status === 'FAILED').length
@@ -117,10 +117,17 @@ export async function POST(request: NextRequest) {
       data: messageData
     })
 
-    // B) DESPACHO: O dispatcher assume o controle do envio (rodando em background sem atrasar a rota HTTP)
-    dispatchCampaign(campaign.id).catch(err => {
-      console.error(`❌ Erro crítico no dispatchCampaign assíncrono para a campanha ${campaign.id}:`, err)
-    })
+    // B) DESPACHO: O dispatcher assume o controle do envio
+    // Se o QStash não estiver configurado, damos await para garantir a execução síncrona na Vercel
+    const qstashConfigured = !!(process.env.QSTASH_TOKEN && process.env.QSTASH_URL)
+    if (!qstashConfigured) {
+      console.log('⚡ QStash não configurado. Aguardando execução síncrona do lote para evitar congelamento na Vercel.')
+      await dispatchCampaign(campaign.id)
+    } else {
+      dispatchCampaign(campaign.id).catch(err => {
+        console.error(`❌ Erro crítico no dispatchCampaign assíncrono para a campanha ${campaign.id}:`, err)
+      })
+    }
 
     return NextResponse.json({
       success: true,

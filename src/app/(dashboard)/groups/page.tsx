@@ -267,7 +267,7 @@ export default function GroupsAdminPage() {
   }
 
   return (
-    <div className="flex-1 flex overflow-hidden bg-slate-950 select-none">
+    <div className="flex-1 flex overflow-hidden bg-slate-950">
       
       {/* 1. SEÇÃO DA ESQUERDA: LISTA DE GRUPOS VIRTUAIS */}
       <div className="w-96 border-r border-slate-900 flex flex-col bg-slate-950/40 shrink-0">
