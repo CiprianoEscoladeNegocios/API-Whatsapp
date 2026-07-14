@@ -171,8 +171,39 @@ export async function POST(request: NextRequest) {
       const messageType = rawMessage.type
 
       let content = ''
+      let dbMessageType: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'AUDIO' = 'TEXT'
+
       if (messageType === 'text') {
         content = rawMessage.text?.body || ''
+      } else if (messageType === 'contacts') {
+        const metaContact = rawMessage.contacts?.[0]
+        if (metaContact) {
+          const formattedName = metaContact.name?.formatted_name || 
+                                [metaContact.name?.first_name, metaContact.name?.last_name].filter(Boolean).join(' ') || 
+                                'Contato Compartilhado'
+          const metaPhone = metaContact.phones?.[0]?.phone || ''
+          
+          const vcardString = [
+            'BEGIN:VCARD',
+            'VERSION:3.0',
+            `FN:${formattedName}`,
+            `TEL;TYPE=CELL:${metaPhone}`,
+            'END:VCARD'
+          ].join('\n')
+
+          const attachment = await prisma.attachment.create({
+            data: {
+              fileName: `contato_${formattedName.replace(/\s+/g, '_')}.vcf`,
+              fileType: 'text/vcard',
+              fileData: Buffer.from(vcardString, 'utf-8')
+            }
+          })
+
+          content = `/api/chat/media?id=${attachment.id}&name=contato_${encodeURIComponent(formattedName)}.vcf`
+          dbMessageType = 'DOCUMENT'
+        } else {
+          content = '[Contato Compartilhado Vazio]'
+        }
       } else {
         content = `[Mídia do tipo: ${messageType}]`
       }
@@ -207,7 +238,7 @@ export async function POST(request: NextRequest) {
           metaMessageId,
           contactId: contact.id,
           direction: 'INBOUND',
-          type: 'TEXT',
+          type: dbMessageType,
           content,
           status: 'READ',
           timestamp: new Date(parseInt(rawMessage.timestamp) * 1000)
@@ -229,7 +260,7 @@ export async function POST(request: NextRequest) {
         await pusherServer.trigger('chats-sidebar', 'sidebar-update', {
           contactId: contact.id,
           lastMessage: {
-            content: newMessage.content,
+            content: newMessage.type !== 'TEXT' ? `[${newMessage.type}]` : newMessage.content,
             timestamp: newMessage.timestamp,
             direction: newMessage.direction
           },

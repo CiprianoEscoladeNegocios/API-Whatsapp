@@ -22,6 +22,7 @@ interface Contact {
   name: string
   phone: string
   tags: string[]
+  active?: boolean
   createdAt: string
 }
 
@@ -43,6 +44,7 @@ export default function ContactsPage() {
   const [editName, setEditName] = useState('')
   const [editPhone, setEditPhone] = useState('')
   const [editTagsStr, setEditTagsStr] = useState('')
+  const [editActive, setEditActive] = useState(true)
   const [isSavingEdit, setIsSavingEdit] = useState(false)
 
   // Estados para Importação de CSV
@@ -123,6 +125,7 @@ export default function ContactsPage() {
     setEditName(contact.name)
     setEditPhone(contact.phone)
     setEditTagsStr(contact.tags.join(', '))
+    setEditActive(contact.active !== false)
     setIsEditContactOpen(true)
   }
 
@@ -140,7 +143,8 @@ export default function ContactsPage() {
           id: editingContactId,
           name: editName,
           phone: editPhone,
-          tags: editTagsStr
+          tags: editTagsStr,
+          active: editActive
         })
       })
 
@@ -161,6 +165,32 @@ export default function ContactsPage() {
       console.error('Erro de conexão ao editar contato:', err)
     } finally {
       setIsSavingEdit(false)
+    }
+  }
+
+  // Alterna o status ativo/inativo do contato diretamente na tabela via API PATCH
+  const handleToggleContactActive = async (contactId: string, currentStatus: boolean) => {
+    try {
+      const newStatus = !currentStatus
+      const res = await fetch('/api/contacts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: contactId,
+          active: newStatus
+        })
+      })
+
+      if (res.ok) {
+        // Atualiza localmente o status na listagem
+        setContacts(prev => prev.map(c => c.id === contactId ? { ...c, active: newStatus } : c))
+      } else {
+        const errData = await res.json()
+        alert(`Erro ao atualizar status do contato: ${errData.error || 'Erro desconhecido'}`)
+      }
+    } catch (err) {
+      console.error('Erro ao alternar status do contato:', err)
+      alert('Não foi possível atualizar o status do contato.')
     }
   }
 
@@ -352,6 +382,7 @@ export default function ContactsPage() {
                 <th className="p-4 pl-6">Nome</th>
                 <th className="p-4">Telefone WhatsApp</th>
                 <th className="p-4">Tags de Segmentação</th>
+                <th className="p-4">Status</th>
                 <th className="p-4">Cadastrado Em</th>
                 <th className="p-4 text-right pr-6">Ações</th>
               </tr>
@@ -398,6 +429,27 @@ export default function ContactsPage() {
                         {contact.tags.length === 0 && (
                           <span className="text-xs text-slate-600">Sem tags</span>
                         )}
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      {/* Switch Liga/Desliga na tabela */}
+                      <div className="flex items-center gap-2 select-none">
+                        <button
+                          onClick={() => handleToggleContactActive(contact.id, contact.active !== false)}
+                          title={contact.active !== false ? 'Desativar contato' : 'Ativar contato'}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            contact.active !== false ? 'bg-emerald-600' : 'bg-slate-800'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                              contact.active !== false ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                        <span className={`text-[10px] font-bold ${contact.active !== false ? 'text-emerald-500' : 'text-slate-500'}`}>
+                          {contact.active !== false ? 'Ativo' : 'Inativo'}
+                        </span>
                       </div>
                     </td>
                     <td className="p-4 text-slate-500">
@@ -719,6 +771,27 @@ export default function ContactsPage() {
                   value={editTagsStr}
                   onChange={(e) => setEditTagsStr(e.target.value)}
                 />
+              </div>
+
+              {/* Status do Contato no modal de edição */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-900 mt-2 select-none">
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-slate-300">Contato Ativo</span>
+                  <span className="text-[10px] text-slate-500">Inative para bloquear envio de campanhas</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditActive(!editActive)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    editActive ? 'bg-emerald-600' : 'bg-slate-800'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      editActive ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
               </div>
 
               <div className="flex justify-end gap-3 mt-6 border-t border-slate-900/60 pt-4">

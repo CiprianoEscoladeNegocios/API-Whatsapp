@@ -50,6 +50,7 @@ export async function GET(request: NextRequest) {
         name: contact.name,
         phone: contact.phone,
         tags: contact.tags,
+        active: contact.active,
         createdAt: contact.createdAt,
         lastMessage: lastMessage ? {
           content: lastMessage.content,
@@ -159,11 +160,11 @@ export async function POST(request: NextRequest) {
 }
 
 // 3. ATUALIZAÇÃO / EDIÇÃO DE CONTATO (PUT)
-// Permite que operadores editem nome, telefone e tags de um contato comercial ativo
+// Permite que operadores editem nome, telefone, tags e status ativo de um contato comercial
 export async function PUT(request: NextRequest) {
   try {
     const payload = await request.json()
-    const { id, name, phone, tags } = payload
+    const { id, name, phone, tags, active } = payload
 
     if (!id || !name || !phone) {
       return NextResponse.json({ error: 'ID, Nome e Telefone são obrigatórios para edição' }, { status: 400 })
@@ -193,14 +194,44 @@ export async function PUT(request: NextRequest) {
       data: {
         name,
         phone: cleanPhone,
-        tags: { set: parsedTags }
+        tags: { set: parsedTags },
+        active: active !== undefined ? !!active : undefined
       }
     })
 
-    console.log(`🔄 [API Contacts] Contato "${name}" (ID: ${id}) atualizado com sucesso! Novo número: ${cleanPhone}`)
+    console.log(`🔄 [API Contacts] Contato "${name}" (ID: ${id}) atualizado com sucesso! Novo número: ${cleanPhone}, ativo: ${updatedContact.active}`)
     return NextResponse.json(updatedContact)
   } catch (error: any) {
     console.error('❌ Erro no PUT de /api/contacts:', error)
+    return NextResponse.json({ error: 'Erro interno do servidor', details: error.message }, { status: 500 })
+  }
+}
+
+// 4. ATUALIZAÇÃO PARCIAL DE STATUS DO CONTATO (PATCH)
+export async function PATCH(request: NextRequest) {
+  try {
+    const payload = await request.json()
+    const { id, active } = payload
+
+    if (!id) {
+      return NextResponse.json({ error: 'O ID do contato é obrigatório' }, { status: 400 })
+    }
+
+    if (active === undefined) {
+      return NextResponse.json({ error: 'O status active é obrigatório' }, { status: 400 })
+    }
+
+    const updatedContact = await prisma.contact.update({
+      where: { id },
+      data: {
+        active: !!active
+      }
+    })
+
+    console.log(`🔄 [API Contacts PATCH] Contato ID ${id} atualizado para active: ${updatedContact.active}`)
+    return NextResponse.json(updatedContact)
+  } catch (error: any) {
+    console.error('❌ Erro no PATCH de /api/contacts:', error)
     return NextResponse.json({ error: 'Erro interno do servidor', details: error.message }, { status: 500 })
   }
 }

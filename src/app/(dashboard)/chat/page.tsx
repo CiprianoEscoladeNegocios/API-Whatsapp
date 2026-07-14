@@ -48,6 +48,7 @@ interface Contact {
   name: string
   phone: string
   tags: string[]
+  active?: boolean
   lastMessage: {
     content: string
     timestamp: string
@@ -133,6 +134,113 @@ export default function ChatPage() {
   const micRecorderRef = useRef<any>(null)
   const recordingIntervalRef = useRef<any>(null)
   const [selectedTagFilter, setSelectedTagFilter] = useState('')
+
+  // 1. CARREGAMENTO INICIAL DE CONTATOS
+  const fetchContacts = async () => {
+    try {
+      setIsLoadingContacts(true)
+      const res = await fetch('/api/contacts?withMessages=true')
+      if (res.ok) {
+        const data = await res.json()
+        setContacts(data)
+      }
+    } catch (err) {
+      console.error('Erro ao buscar contatos para o chat:', err)
+    } finally {
+      setIsLoadingContacts(false)
+    }
+  }
+
+  // Estado para armazenar dados processados dos contatos compartilhados (vCards)
+  const [vcardDetails, setVcardDetails] = useState<Record<string, { 
+    name: string; 
+    phone: string; 
+    isImported: boolean; 
+    isVcard: boolean; 
+    isLoading: boolean; 
+  }>>({})
+  const processedVcardsRef = useRef<Set<string>>(new Set())
+
+  // Handler modular para cadastrar o contato do vCard automaticamente
+  const handleImportVcard = async (messageId: string, name: string, phone: string) => {
+    setVcardDetails(prev => ({
+      ...prev,
+      [messageId]: { ...prev[messageId], isLoading: true }
+    }))
+    
+    try {
+      const res = await fetch('/api/contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          phone,
+          tags: ['Importado via Chat', 'vCard']
+        })
+      })
+      
+      if (res.ok) {
+        setVcardDetails(prev => ({
+          ...prev,
+          [messageId]: { ...prev[messageId], isImported: true, isLoading: false }
+        }))
+        
+        // Se for o contato ativo, atualiza o nome dele localmente
+        if (activeContact && activeContact.phone === phone) {
+          setActiveContact(prev => prev ? { ...prev, name } : null)
+        }
+
+        // Toca o som de notificação comercial premium da Cipriano Escola de Negócios
+        playNotificationSound()
+        
+        // Recarrega a lista de contatos para atualizar a barra lateral
+        await fetchContacts()
+      } else {
+        const errData = await res.json()
+        alert(`Erro ao cadastrar contato: ${errData.error || 'Erro desconhecido'}`)
+        setVcardDetails(prev => ({
+          ...prev,
+          [messageId]: { ...prev[messageId], isLoading: false }
+        }))
+      }
+    } catch (err) {
+      console.error('Erro ao cadastrar contato do vcard:', err)
+      alert('Ocorreu um erro ao cadastrar o contato. Por favor, tente novamente.')
+      setVcardDetails(prev => ({
+        ...prev,
+        [messageId]: { ...prev[messageId], isLoading: false }
+      }))
+    }
+  }
+
+  // Alterna o status ativo/inativo do contato via API PATCH
+  const handleToggleContactActive = async (contactId: string, currentStatus: boolean) => {
+    try {
+      const newStatus = !currentStatus
+      const res = await fetch('/api/contacts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: contactId,
+          active: newStatus
+        })
+      })
+
+      if (res.ok) {
+        // Atualiza localmente o contato ativo
+        setActiveContact(prev => prev ? { ...prev, active: newStatus } : null)
+        
+        // Atualiza a barra lateral de chats
+        await fetchContacts()
+      } else {
+        const errData = await res.json()
+        alert(`Erro ao alterar status do contato: ${errData.error || 'Erro desconhecido'}`)
+      }
+    } catch (err) {
+      console.error('Erro ao alternar status do contato:', err)
+      alert('Ocorreu um erro ao atualizar o status do contato.')
+    }
+  }
 
   const handleReactToMessage = async (messageId: string, emoji: string | null) => {
     // Atualização otimista local imediata
@@ -259,22 +367,9 @@ export default function ChatPage() {
   // Emojis mais comuns do WhatsApp corporativo
   const emojis = ['😀', '😂', '😍', '👍', '🙏', '🚀', '🔥', '👏', '🎉', '💡', '🏆', '💼', '📈', '💬', '📱', '✅', '❌', '⚠️']
 
-  // 1. CARREGAMENTO INICIAL DE CONTATOS
+  // 1. CARREGAMENTO INICIAL DE CONTATOS DE FORMA AUTOMÁTICA
+
   useEffect(() => {
-    async function fetchContacts() {
-      try {
-        setIsLoadingContacts(true)
-        const res = await fetch('/api/contacts?withMessages=true')
-        if (res.ok) {
-          const data = await res.json()
-          setContacts(data)
-        }
-      } catch (err) {
-        console.error('Erro ao buscar contatos para o chat:', err)
-      } finally {
-        setIsLoadingContacts(false)
-      }
-    }
     fetchContacts()
   }, [])
 
@@ -317,6 +412,36 @@ export default function ChatPage() {
     
     fetchMessages()
   }, [activeContact])
+
+  // 2.B EFEITO PARA ANALISAR CONTATOS VCARD RECEBIDOS DE FORMA PREGUIÇOSA (LAZY)
+  useEffect(() => {
+    messages.forEach(async (msg) => {
+      if (msg.type === 'DOCUMENT' && !processedVcardsRef.current.has(msg.id)) {
+        processedVcardsRef.current.add(msg.id)
+        
+        try {
+          const res = await fetch(`/api/contacts/parse-vcard?messageId=${msg.id}`)
+          if (res.ok) {
+            const data = await res.json()
+            if (data.isVcard) {
+              setVcardDetails(prev => ({
+                ...prev,
+                [msg.id]: { 
+                  name: data.name, 
+                  phone: data.phone, 
+                  isImported: data.isAlreadyContact, 
+                  isVcard: true, 
+                  isLoading: false 
+                }
+              }))
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao analisar vcard:', err)
+        }
+      }
+    })
+  }, [messages])
 
   // 3. ROLAGEM AUTOMÁTICA DE TELA DO CHAT
   useEffect(() => {
@@ -936,8 +1061,78 @@ export default function ChatPage() {
       )
     }
     if (message.type === 'DOCUMENT') {
-      const fileName = message.content.split('/').pop() || 'documento.pdf'
+      const vcard = vcardDetails[message.id]
       const documentSrc = getMediaSrc(message.content)
+
+      if (vcard && vcard.isVcard) {
+        return (
+          <div className="flex flex-col gap-3 p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-emerald-500/30 max-w-xs shadow-xl mt-1 relative overflow-hidden group/vcard">
+            {/* Efeito luminoso comercial premium */}
+            <div className="absolute top-0 right-0 w-12 h-12 bg-emerald-500/10 rounded-full filter blur-xl group-hover/vcard:bg-emerald-500/20 transition-all duration-300" />
+            
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                <User className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col min-w-0 text-left">
+                <span className="text-xs font-bold text-slate-100 truncate">{vcard.name}</span>
+                <span className="text-[10px] text-slate-400 truncate">+{vcard.phone}</span>
+              </div>
+            </div>
+            
+            <div className="flex gap-2 mt-1">
+              {vcard.isImported ? (
+                <div className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-slate-900 border border-slate-800 text-[10px] font-semibold text-emerald-400 select-none">
+                  <Check className="w-3 h-3" />
+                  Cadastrado
+                </div>
+              ) : (
+                <button
+                  onClick={() => handleImportVcard(message.id, vcard.name, vcard.phone)}
+                  disabled={vcard.isLoading}
+                  className="flex-1 py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] disabled:opacity-50 text-white text-[10px] font-semibold shadow-md shadow-emerald-950/20 transition-all flex items-center justify-center gap-1.5"
+                >
+                  {vcard.isLoading ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Cadastrando...
+                    </>
+                  ) : (
+                    <>
+                      <User className="w-3 h-3" />
+                      Cadastrar Contato
+                    </>
+                  )}
+                </button>
+              )}
+              
+              <a
+                href={getDownloadUrl(message.content)}
+                download
+                title="Baixar Contato (.vcf)"
+                className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/20 active:scale-95 transition-all shadow-lg shrink-0 flex items-center justify-center"
+              >
+                <Download className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+        )
+      }
+
+      // Função auxiliar local para obter o nome do arquivo amigável
+      let fileName = 'documento.pdf'
+      try {
+        if (message.content.startsWith('/api/chat/media')) {
+          const urlObj = new URL(message.content, window.location.origin)
+          const nameParam = urlObj.searchParams.get('name')
+          fileName = nameParam ? decodeURIComponent(nameParam) : 'documento.pdf'
+        } else {
+          fileName = decodeURIComponent(message.content).split('/').pop()?.split('?')[0] || 'documento.pdf'
+        }
+      } catch {
+        fileName = message.content.split('/').pop() || 'documento.pdf'
+      }
+
       return (
         <div className="flex items-center gap-2 mt-1 max-w-xs group/media">
           <a 
@@ -1055,12 +1250,17 @@ export default function ChatPage() {
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1 mb-1">
-                      <h4 className={`text-sm truncate ${
+                      <h4 className={`text-sm truncate flex items-center gap-1.5 ${
                         isPending && !isSelected 
                           ? 'text-emerald-300 font-extrabold' 
                           : 'font-semibold text-slate-200'
-                      }`}>
+                      } ${contact.active === false ? 'opacity-60' : ''}`}>
                         {contact.name}
+                        {contact.active === false && (
+                          <span className="text-[8px] bg-rose-950/80 text-rose-400 border border-rose-500/20 px-1 py-0.2 rounded-md font-extrabold select-none uppercase shrink-0 tracking-wider">
+                            Inativo
+                          </span>
+                        )}
                       </h4>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[10px] text-slate-500 font-medium">
@@ -1129,6 +1329,26 @@ export default function ChatPage() {
 
               {/* Ações e Tags do Contato Ativo */}
               <div className="flex items-center gap-3">
+                {/* Switch Liga/Desliga de Status do Contato (Inativar/Ativar) */}
+                <div className="flex items-center gap-2 pr-3 border-r border-slate-900 select-none">
+                  <span className={`text-[9px] font-extrabold uppercase tracking-wider ${activeContact.active !== false ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {activeContact.active !== false ? 'Ativo' : 'Inativo'}
+                  </span>
+                  <button
+                    onClick={() => handleToggleContactActive(activeContact.id, activeContact.active !== false)}
+                    title={activeContact.active !== false ? 'Inativar contato (evitar campanhas)' : 'Ativar contato'}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      activeContact.active !== false ? 'bg-emerald-600' : 'bg-slate-800'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        activeContact.active !== false ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
                 <div className="hidden md:flex gap-1.5">
                   {activeContact.tags.map((tag, idx) => (
                     <span 
@@ -1163,19 +1383,44 @@ export default function ChatPage() {
                   </div>
                 </div>
               ) : (
-                messages.map((message) => {
-                  const isOutbound = message.direction === 'OUTBOUND'
-                  const date = new Date(message.timestamp)
-                  const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                (() => {
+                  let lastRenderedDate: string | null = null
+                  return messages.map((message) => {
+                    const isOutbound = message.direction === 'OUTBOUND'
+                    const date = new Date(message.timestamp)
+                    const dateStr = date.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })
+                    let showDateDivider = false
+                    if (dateStr !== lastRenderedDate) {
+                      showDateDivider = true
+                      lastRenderedDate = dateStr
+                    }
+                    const formattedDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+                    const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    const fullTimeStr = `${formattedDate} ${timeStr}`
+                    const getFriendlyDateLabel = (d: Date) => {
+                      const today = new Date()
+                      const yesterday = new Date()
+                      yesterday.setDate(today.getDate() - 1)
+                      if (d.toDateString() === today.toDateString()) return 'Hoje'
+                      if (d.toDateString() === yesterday.toDateString()) return 'Ontem'
+                      return d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' })
+                    }
 
-                   return (
-                    <div
-                      key={message.id}
-                      id={`msg-${message.id}`}
-                      className={`flex flex-col max-w-[70%] relative group/msg mb-2 ${
-                        isOutbound ? 'self-end items-end' : 'self-start items-start'
-                      }`}
-                    >
+                    return (
+                      <React.Fragment key={message.id}>
+                        {showDateDivider && (
+                          <div className="flex justify-center my-4 select-none shrink-0 w-full col-span-full">
+                            <span className="px-4 py-1.5 rounded-full bg-slate-900/60 border border-slate-800 text-[10px] font-bold text-slate-400 shadow-md">
+                              {getFriendlyDateLabel(date)}
+                            </span>
+                          </div>
+                        )}
+                        <div
+                          id={`msg-${message.id}`}
+                          className={`flex flex-col max-w-[70%] relative group/msg mb-2 ${
+                            isOutbound ? 'self-end items-end' : 'self-start items-start'
+                          }`}
+                        >
                       {/* Controles Flutuantes da Mensagem (Hover) */}
                       <div
                         className={`absolute top-1/2 -translate-y-1/2 opacity-0 group-hover/msg:opacity-100 transition-all duration-200 flex items-center gap-1.5 shrink-0 z-20 ${
@@ -1258,8 +1503,8 @@ export default function ChatPage() {
                             isOutbound ? 'text-emerald-200 justify-end' : 'text-slate-500 justify-start'
                           }`}
                         >
-                          <span>{timeStr}</span>
-                          {isOutbound && renderMessageStatus(message.status)}
+                           <span>{fullTimeStr}</span>
+                           {isOutbound && renderMessageStatus(message.status)}
                         </div>
 
                         {/* Pílula de Reação */}
@@ -1275,9 +1520,11 @@ export default function ChatPage() {
                           </div>
                         )}
                       </div>
-                    </div>
-                  )
-                })
+                        </div>
+                      </React.Fragment>
+                    )
+                  })
+                })()
               )}
               
               {/* Balão dinâmico de Uploading... */}

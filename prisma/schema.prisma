@@ -76,6 +76,7 @@ model Contact {
   phone         String               @unique // Número em formato internacional (ex: 5511999999999)
   name          String
   tags          String[]             @default([]) // Tags para segmentação de campanhas (ex: ["lead", "VIP"])
+  active        Boolean              @default(true) // Status de ativação do contato comercial (para campanhas)
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   messages      Message[]

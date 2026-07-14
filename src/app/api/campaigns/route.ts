@@ -69,17 +69,19 @@ export async function POST(request: NextRequest) {
 
     // Busca apenas os contatos selecionados ou, se não informado, todos das tags selecionadas
     let contacts = []
-    if (Array.isArray(selectedContactIds)) {
+    if (selectedContactIds && selectedContactIds.length > 0) {
       contacts = await prisma.contact.findMany({
         where: {
           id: {
             in: selectedContactIds
-          }
+          },
+          active: true
         }
       })
     } else {
       contacts = await prisma.contact.findMany({
         where: {
+          active: true,
           tags: {
             hasSome: targetTags
           }
